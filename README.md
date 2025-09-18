@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This document describes the automated pipeline responsible for receiving DICOM and RRDF files from a Hyperfine MRI scanner, processing it, and securely uploading it to a designated project in Flywheel.
+This document describes the automated pipeline responsible for receiving DICOM and RRDF data from a Hyperfine MRI scanner, processing it, and securely uploading it to a designated project in Flywheel.
 
 The system is built around an **Orthanc DICOM server** running on a Raspberry Pi 5. The core logic is handled by a custom **Lua script** that is triggered by Orthanc events. This script orchestrates helper scripts and configuration files to create a robust workflow.
 
