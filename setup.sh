@@ -153,17 +153,12 @@ finalize() {
   
   echo ""
   echo "------------------------------------------------------------"
-  echo "✅ Setup Complete!"
+  echo "Setup Complete!"
   echo "------------------------------------------------------------"
   echo "The pipeline is now running."
   echo ""
   echo "To monitor the system, run:"
   echo "  sudo tail -f /var/log/orthanc/Orthanc.log"
-  echo ""
-  echo "--- MANUAL SECURITY STEP ---"
-  echo "For added security, please enforce the sudo password now:"
-  echo "  1. Run 'sudo visudo'"
-  echo "  2. Change 'hyperwheel ALL=(ALL) NOPASSWD: ALL' to 'hyperwheel ALL=(ALL) PASSWD: ALL'"
 }
 
 # --- Run Script ---
