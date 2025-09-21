@@ -41,8 +41,8 @@ update_system() {
 }
 
 install_dependencies() {
-  print_step "Installing Core Dependencies (orthanc, git, python3-venv)"
-  apt install -y orthanc git python3-venv
+  print_step "Installing Orthanc"
+  apt install -y orthanc
 }
 
 setup_network() {
