@@ -163,8 +163,6 @@ end
 function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
   print('--- Starting File Verification for ' .. local_study_path .. ' ---')
 
-  -- This cache will store the file listings of remote directories we've already checked.
-  -- Key: local directory path, Value: a 'set' table of remote filenames.
   local remoteDirCache = {}
 
   local find_command = string.format("find %s -type f", local_study_path)
@@ -179,16 +177,28 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
   for local_filepath in find_handle:lines() do
     -- 1. Extract the local directory and filename from the full path
     local filename = string.match(local_filepath, "([^/]+)$")
-    local local_dir = string.gsub(local_filepath, filename, "")
+    -- Use string.match to capture everything up to the last '/'
+    local local_dir = string.match(local_filepath, "^(.*/)") 
+
+    -- If pattern matching failed somehow, skip this file
+    if not filename or not local_dir then
+        print("[ERROR] Could not parse filename or directory from path: " .. local_filepath)
+        all_files_verified = false
+        goto continue -- Skip to the next iteration of the loop
+    end
 
     -- 2. Check if we have the file list for this directory in our cache
     if not remoteDirCache[local_dir] then
       print('--------------------------------------------------------')
-      print('[CACHE MISS] First file in this directory. Fetching remote file list.')
+      print('[CACHE MISS] First file in this directory. Fetching remote list for directory: ' .. local_dir)
 
-      -- Construct the remote URI for the parent directory
-      local relative_dir = string.gsub(local_dir, local_study_path .. '/', '')
+      -- Construct the relative path (ensure base path ends with '/')
+      local base_path = local_study_path
+      if not base_path:find('/$') then base_path = base_path .. '/' end
+      
+      local relative_dir = string.gsub(local_dir, base_path, '', 1) -- Replace only the first occurrence
       relative_dir = string.gsub(relative_dir, "/$", "") -- Remove trailing slash
+      
       local fw_uri_to_list = fw_project_uri .. '/' .. relative_dir
 
       print('[FETCH] Listing files from: ' .. fw_uri_to_list)
@@ -207,12 +217,15 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
           local remote_filename = string.match(line, "%d%d%d%d%-%d%d%-%d%d%s+%d%d:%d%d%s+(.+)")
           if remote_filename then
             remote_filename = string.gsub(remote_filename, "^%s*(.-)%s*$", "%1") -- Trim whitespace
+            remote_filename = remote_filename:gsub("\r", "") -- Remove potential carriage returns
             print('[FOUND REMOTE FILE] ' .. remote_filename)
             remoteDirCache[local_dir][remote_filename] = true -- Add filename to the set
           end
         end
       else
         print('[ERROR] The fw ls command failed for directory: ' .. fw_uri_to_list)
+        -- Don't mark all files as failed, just note the error and continue
+        -- all_files_verified will remain false because files in this dir won't be verified
       end
     end
 
@@ -220,18 +233,19 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
     print('[CHECK] Local file: ' .. filename)
     local remoteFileSet = remoteDirCache[local_dir]
 
-    -- This is now a very fast table lookup.
     if remoteFileSet and remoteFileSet[filename] then
-      print('[SUCCESS] File confirmed in cached remote directory listing. Deleting local copy.')
+      print('[SUCCESS] File confirmed. Deleting local copy.')
       os.execute(string.format('rm "%s"', local_filepath))
     else
-      print('[SKIP] File not found in remote directory. The local copy will be kept.')
+      print('[SKIP] File not found in remote directory. Local copy kept.')
       all_files_verified = false
     end
+    
+    ::continue::
   end
   find_handle:close()
 
-  -- 4. Clean up any empty directories that are left over
+  -- 4. Clean up empty directories
   print('--- Cleaning up empty directories... ---')
   ExecuteAndLog(string.format("find %s -type d -empty -delete", local_study_path))
 

@@ -132,14 +132,19 @@ The entire setup process is automated by the `setup.sh` script.
     * `/usr/share/orthanc/routing.json`
     * `/usr/share/orthanc/.fw_keychain.json`
 
-#### 9. Enforce `sudo` Password
-For added security, require a password for administrative commands.
-* Access the file that controls password rules for users
+    Example:
     ```bash
     sudo visudo /etc/sudoers.d/010_pi-nopasswd
     ```
     
-* Find the line
+4.  **Enforce `sudo` Password**
+    For added security, require a password for administrative commands.
+    * Access the file that controls password rules for users
+    ```bash
+    sudo visudo /etc/sudoers.d/010_pi-nopasswd
+    ```
+    
+    * Find the line
     
     `<your_username> ALL=(ALL) NOPASSWD: ALL`
     
@@ -147,12 +152,8 @@ For added security, require a password for administrative commands.
     
     `<your_username> ALL=(ALL) PASSWD: ALL`
 
-#### 10. Finalize Installation
-Enable the Orthanc service to start on boot and restart it to apply all changes.
-```bash
-sudo systemctl enable --now orthanc
-```
-The setup is complete. The pipeline's activity can be monitored by watching the Orthanc log:
-```bash
-sudo tail -f /var/log/orthanc/Orthanc.log
-```
+5.  **Monitor Activity**
+    The setup is complete. The pipeline's activity can be monitored by watching the Orthanc log:
+    ```bash
+    sudo tail -f /var/log/orthanc/Orthanc.log
+    ```
