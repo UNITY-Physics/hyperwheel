@@ -72,10 +72,10 @@ setup_network() {
   fi
 
   echo "Configuring static IP for eth0 to $pi_ip..."
-  nmcli connection modify eth0 ipv4.addresses "$pi_ip" ipv4.gateway "$gateway"
-  nmcli connection modify eth0 ipv4.dns "1.1.1.1 1.0.0.1"
-  nmcli connection modify eth0 ipv4.method manual
-  nmcli connection down eth0 && nmcli connection up eth0
+  nmcli connection modify "Wired connection 1" ipv4.addresses "$pi_ip" ipv4.gateway "$gateway"
+  nmcli connection modify "Wired connection 1" ipv4.dns "1.1.1.1 1.0.0.1"
+  nmcli connection modify "Wired connection 1" ipv4.method manual
+  nmcli connection down "Wired connection 1" && nmcli connection up "Wired connection 1"
 
   echo "Generating network config file for Python scripts..."
   tee "$config_file" > /dev/null <<EOL
@@ -104,7 +104,6 @@ setup_python_env() {
   fi
   
   echo "Installing Python packages..."
-  sudo -u "$ORTHANC_USER" sh -c "$PYTHON_ENV_DIR/bin/pip install --upgrade pip"
   sudo -u "$ORTHANC_USER" sh -c "$PYTHON_ENV_DIR/bin/pip install paramiko pydicom scp"
 }
 
@@ -135,7 +134,7 @@ deploy_and_secure_files() {
   echo "  2. /usr/share/orthanc/.fw_keychain.json (Flywheel API keys)"
   echo "Once you have saved your configurations, return here."
   echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-  read -p "Press [Enter] to continue..."
+  read -p "Press [Enter] when completed..."
   
   echo "Applying final permissions..."
   chown -R orthanc:orthanc /usr/share/orthanc/
