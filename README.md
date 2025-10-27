@@ -1,4 +1,6 @@
-# Orthanc to Flywheel Automation Pipeline
+![hyperwheel_logo](https://github.com/user-attachments/assets/a7c833df-3650-4902-b12e-2101a91cfdd3)
+
+# Hyperfine to Flywheel Automation Pipeline
 
 ## 1. Overview
 
