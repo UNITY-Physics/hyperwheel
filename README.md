@@ -132,18 +132,34 @@ The entire setup process is automated by the `setup.sh` script.
     * `/usr/share/orthanc/routing.json`
     * `/usr/share/orthanc/.fw_keychain.json`
 
-    Example:
+    *routing.json* example:
     ```bash
-    sudo visudo /etc/sudoers.d/010_pi-nopasswd
+    {
+        "prisma": "fw://prisma/PRISMA-Gothenburg",
+        "aphrc": "fw://global_map/APHRC-Stockholm"
+    }
     ```
+    The `fw://group/project` path can be found at the top of your flywheel project page.
+
+
+    *.fw_keychain.json* example:
+    ```bash
+    {
+        "prisma": "bmgf.flywheel.io:AZw9R5EAG5hVwVd1s7opdE5yKZeVzR1avBdjhw6ZNVaAd5ZEwT95cSmr",
+        "aphrc": "bmgf.flywheel.io:5Z5EdRhw9Vz71AoZhwVm5yETKaVprAvzN6d1eVdBVRwSvjE1S9d5Aso"
+    }
+    ```
+    To generate an API key, click your profile icon in the top left and scroll to the bottom of the page. Use Google Chrome.
+
     
 4.  **Enforce `sudo` Password**
+
     For added security, require a password for administrative commands.
     * Access the file that controls password rules for users
     ```bash
     sudo visudo /etc/sudoers.d/010_pi-nopasswd
     ```
-    
+
     * Find the line
     
     `<your_username> ALL=(ALL) NOPASSWD: ALL`
@@ -153,6 +169,7 @@ The entire setup process is automated by the `setup.sh` script.
     `<your_username> ALL=(ALL) PASSWD: ALL`
 
 5.  **Monitor Activity**
+
     The setup is complete. The pipeline's activity can be monitored by watching the Orthanc log:
     ```bash
     sudo tail -f /var/log/orthanc/Orthanc.log
