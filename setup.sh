@@ -91,7 +91,7 @@ install_flywheel_cli() {
   if [ -f "$FW_CLI_DIR/fw-beta" ]; then
     echo "Flywheel CLI already installed. Skipping."
   else
-    sudo -u "$ORTHANC_USER" sh -c "curl -sSL https://storage.googleapis.com/flywheel-dist/fw-cli/stable/install.sh | FW_CLI_INSTALL_DIR=$FW_CLI_DIR/ sh"
+    sudo -u "$ORTHANC_USER" sh -c "curl -sSL https://storage.googleapis.com/flywheel-dist/fw-cli/0.26/install.sh | FW_CLI_INSTALL_DIR=$FW_CLI_DIR/ sh"
   fi
 }
 
