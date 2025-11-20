@@ -152,7 +152,7 @@ finalize() {
   
   echo ""
   echo "------------------------------------------------------------"
-  echo "Setup Complete!"
+  echo "Setup Complete! Please reboot "
   echo "------------------------------------------------------------"
   echo "The pipeline is now running."
   echo ""

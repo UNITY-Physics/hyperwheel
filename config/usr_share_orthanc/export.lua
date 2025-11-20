@@ -56,7 +56,7 @@ function CleanSeriesDescription(description)
   end
   cleaned = string.gsub(cleaned, '%s+-%s+', '_')
   cleaned = string.gsub(cleaned, '%s+', '_')
-  cleaned = string.gsub(cleaned, '[^%w_.-]', '')
+  cleaned = string.gsub(cleaned, '[^%w_-]', '')
   return cleaned
 end
 
