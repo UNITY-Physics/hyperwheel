@@ -2,6 +2,8 @@
 
 # Hyperfine to Flywheel Automation Pipeline
 
+Credit/blame: Petter Clemensson, King's College London.
+
 ## 1. Overview
 
 This document describes the automated pipeline responsible for receiving DICOM and RRDF files from a Hyperfine MRI scanner, processing it, and securely uploading it to a designated project in Flywheel.
