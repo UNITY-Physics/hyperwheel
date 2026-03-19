@@ -71,11 +71,28 @@ setup_network() {
       exit 1
   fi
 
-  echo "Configuring static IP for eth0 to $pi_ip..."
-  nmcli connection modify "Wired connection 1" ipv4.addresses "$pi_ip" ipv4.gateway "$gateway"
-  nmcli connection modify "Wired connection 1" ipv4.dns "1.1.1.1 1.0.0.1"
-  nmcli connection modify "Wired connection 1" ipv4.method manual
-  nmcli connection down "Wired connection 1" && nmcli connection up "Wired connection 1"
+  # --- NEW LOGIC: Find connection name dynamically ---
+  echo "Detecting NetworkManager connection profile for eth0..."
+  local eth_con_name
+  eth_con_name=$(nmcli -t -f NAME,DEVICE connection show | awk -F: '$2=="eth0" {print $1}' | head -n 1)
+
+  if [[ -z "$eth_con_name" ]]; then
+      echo "No existing connection profile found for eth0."
+      echo "Creating a new dedicated profile named 'eth0-hyperwheel'..."
+      nmcli connection add type ethernet ifname eth0 con-name "eth0-hyperwheel"
+      eth_con_name="eth0-hyperwheel"
+  else
+      echo "Successfully detected active ethernet profile: '$eth_con_name'"
+  fi
+  # ---------------------------------------------------
+
+  echo "Configuring static IP for eth0 to $pi_ip on profile '$eth_con_name'..."
+  nmcli connection modify "$eth_con_name" ipv4.addresses "$pi_ip" ipv4.gateway "$gateway"
+  nmcli connection modify "$eth_con_name" ipv4.dns "1.1.1.1 1.0.0.1"
+  nmcli connection modify "$eth_con_name" ipv4.method manual
+  
+  echo "Restarting connection to apply changes..."
+  nmcli connection down "$eth_con_name" && nmcli connection up "$eth_con_name"
 
   echo "Generating network config file for Python scripts..."
   tee "$config_file" > /dev/null <<EOL
