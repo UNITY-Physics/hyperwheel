@@ -71,7 +71,7 @@ setup_network() {
       exit 1
   fi
 
-  # --- NEW LOGIC: Find connection name dynamically ---
+  # --- Find connection name dynamically ---
   echo "Detecting NetworkManager connection profile for eth0..."
   local eth_con_name
   eth_con_name=$(nmcli -t -f NAME,DEVICE connection show | awk -F: '$2=="eth0" {print $1}' | head -n 1)
