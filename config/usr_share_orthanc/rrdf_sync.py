@@ -7,12 +7,14 @@ This script automates the synchronization of raw research data files (.h5)
 from a Hyperfine MRI scanner to the local data server.
 
 Workflow:
-1.  Connects to the scanner via SSH using paramiko.
-2.  Identifies and downloads the most recent exam folder via SCP.
-3.  Matches each downloaded .h5 file to its corresponding DICOM acquisition
+1.  Scans the local DICOM export directory to find existing session folders.
+2.  Connects to the scanner via SSH using paramiko.
+3.  For each local session, looks for a matching RRDF folder on the scanner.
+4.  Downloads the matching RRDF folder via SCP.
+5.  Matches each downloaded .h5 file to its corresponding DICOM acquisition
     folder by comparing timestamps.
-4.  Relocates the .h5 file and renames it to match the acquisition.
-5.  Performs special renaming for CALIPR series DICOM files.
+6.  Relocates the .h5 file and renames it to match the acquisition.
+7.  Performs special renaming for CALIPR series DICOM files.
 """
 import paramiko
 from scp import SCPClient
@@ -122,7 +124,7 @@ def parse_rrdf_timestamps(rrdf_folder_path):
 
 def relocate_rrdf_files_by_time(temp_download_path, dicom_session_path):
     """Moves each .h5 file to the DICOM acquisition folder with the closest timestamp."""
-    print("\n--- Starting RRDF Relocation and Renaming Process ---")
+    print(f"\n--- Starting RRDF Relocation for Session: {os.path.basename(dicom_session_path)} ---")
     dicom_acq_times = get_dicom_acquisition_times(dicom_session_path)
     rrdf_file_times = parse_rrdf_timestamps(temp_download_path)
 
@@ -158,99 +160,99 @@ def relocate_rrdf_files_by_time(temp_download_path, dicom_session_path):
             print(f"Warning: No close time match for '{os.path.basename(rrdf_path)}'. Not moved.")
 
 
-def find_dicom_session_path(base_export_path, rrdf_folder_name):
+def find_local_dicom_sessions(base_export_path):
     """
-    Finds the DICOM session folder that corresponds to the RRDF exam folder
-    by recursively searching the export directory.
+    Scans the local export directory and returns a dictionary of session paths
+    mapped to their expected RRDF folder name.
+    Looks for folders matching the pattern YYYY-MM-DD_HH_MM_SS
     """
-    match = re.search(r'rrdf_(\d{8})_(\d{6})', rrdf_folder_name)
-    if not match:
-        print(f"Error: Could not parse timestamp from RRDF folder '{rrdf_folder_name}'.")
-        return None
+    sessions = {}
+    print(f"Scanning local directory '{base_export_path}' for DICOM sessions...")
     
-    date_part, time_part = match.groups()
-    session_date = f"{date_part[0:4]}-{date_part[4:6]}-{date_part[6:8]}"
-    session_time = f"{time_part[0:2]}_{time_part[2:4]}_{time_part[4:6]}"
-    target_session_name = f"{session_date}_{session_time}"
-    print(f"Searching recursively for DICOM session folder named: '{target_session_name}'")
+    # Regex to match the date format used in export.lua
+    session_pattern = re.compile(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})_(\d{2})_(\d{2})')
 
-    # Use os.walk to search through all directories recursively
     for root, dirs, files in os.walk(base_export_path):
-        if target_session_name in dirs:
-            found_path = os.path.join(root, target_session_name)
-            print(f"Success! Found matching session at: {found_path}")
-            return found_path
-            
-    print(f"Error: No matching DICOM session folder found for '{target_session_name}'.")
-    return None
+        for d in dirs:
+            match = session_pattern.match(d)
+            if match:
+                year, month, day, hour, minute, second = match.groups()
+                # Construct the expected RRDF folder name format
+                expected_rrdf_name = f"rrdf_{year}{month}{day}_{hour}{minute}{second}"
+                full_path = os.path.join(root, d)
+                sessions[expected_rrdf_name] = full_path
+                print(f"  Found session: {d} (Expected RRDF: {expected_rrdf_name})")
+    
+    return sessions
 
-
-def get_latest_exam_folder(ssh):
-    """Connects to the scanner and finds the name of the most recent exam folder."""
-    stdin, stdout, stderr = ssh.exec_command("ls -l --full-time RRDF")
-    folders_output = stdout.read().decode('ascii').split('\n')
-    exam_folders = {}
-    for line in folders_output:
-        if 'rrdf_' in line:
-            finfo = line.split()
-            # Parse the folder name and its modification time.
-            folder_name, date_str, time_str = finfo[-1], finfo[5], finfo[6]
-            folder_datetime = datetime.datetime.strptime(f"{date_str} {time_str.split('.')[0]}", "%Y-%m-%d %H:%M:%S")
-            exam_folders[folder_name] = folder_datetime
-    if not exam_folders: return None
-    return max(exam_folders, key=exam_folders.get)
-
+def get_remote_rrdf_folders(ssh):
+    """Gets a list of all rrdf_ folders on the scanner."""
+    stdin, stdout, stderr = ssh.exec_command("ls -1 RRDF")
+    output = stdout.read().decode('ascii').split('\n')
+    # Filter for folders starting with 'rrdf_'
+    return [f.strip() for f in output if f.strip().startswith('rrdf_')]
 
 def main():
     """Main function to orchestrate the entire process."""
+    
+    # --- 0. Find Local DICOM Sessions ---
+    local_sessions = find_local_dicom_sessions(DICOM_EXPORT_ROOT)
+    
+    if not local_sessions:
+        print("No local DICOM sessions found in the export directory. Exiting.")
+        return
+
     # --- 1. SSH Connection ---
     SWOOP_IP = get_scanner_ip() # Get the IP dynamically
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        print(f"Connecting to scanner at {SWOOP_IP}...")
+        print(f"\nConnecting to scanner at {SWOOP_IP}...")
         ssh.connect(SWOOP_IP, username=SWOOP_USER, password=SWOOP_PASS, port=SWOOP_PORT)
         print("Connection successful.\n")
     except Exception as e:
-        print(f"Connection failed: {e}"); sys.exit(1)
+        print(f"Connection failed: {e}")
+        sys.exit(1)
 
     try:
-        latest_exam_folder = get_latest_exam_folder(ssh)
-        if not latest_exam_folder:
-            print("Query returned no exam files. Exiting.")
-            return
-        print(f"Latest exam found: {latest_exam_folder}")
-        remote_path = f'RRDF/{latest_exam_folder}'
+        # --- 2. Check Remote Folders ---
+        remote_folders = get_remote_rrdf_folders(ssh)
+        print(f"Found {len(remote_folders)} RRDF folders on the scanner.")
 
-        # --- 2. Download ---
-        print(f"Downloading remote folder '{remote_path}' to '{TEMP_DOWNLOAD_DIR}'...")
-        if os.path.exists(TEMP_DOWNLOAD_DIR): shutil.rmtree(TEMP_DOWNLOAD_DIR)
-        os.makedirs(TEMP_DOWNLOAD_DIR)
+        # --- 3. Process Each Local Session ---
+        for expected_rrdf, local_session_path in local_sessions.items():
+            if expected_rrdf in remote_folders:
+                print(f"\n--- Processing matching session: {expected_rrdf} ---")
+                remote_path = f'RRDF/{expected_rrdf}'
 
-        # Call SCPClient without the progress argument for silent operation.
-        with SCPClient(ssh.get_transport()) as scp:
-            scp.get(remote_path, recursive=True, local_path=TEMP_DOWNLOAD_DIR)
+                # --- 4. Download ---
+                print(f"Downloading remote folder '{remote_path}' to '{TEMP_DOWNLOAD_DIR}'...")
+                if os.path.exists(TEMP_DOWNLOAD_DIR): shutil.rmtree(TEMP_DOWNLOAD_DIR)
+                os.makedirs(TEMP_DOWNLOAD_DIR)
 
-        temp_local_rrdf_path = os.path.join(TEMP_DOWNLOAD_DIR, latest_exam_folder)
-        print("Download complete.\n")
+                with SCPClient(ssh.get_transport()) as scp:
+                    scp.get(remote_path, recursive=True, local_path=TEMP_DOWNLOAD_DIR)
 
-        # --- 3. Relocate and Rename ---
-        dicom_session_path = find_dicom_session_path(DICOM_EXPORT_ROOT, latest_exam_folder)
-        if dicom_session_path:
-            relocate_rrdf_files_by_time(temp_local_rrdf_path, dicom_session_path)
-        else:
-            print("Skipping relocation due to missing DICOM session folder.")
+                temp_local_rrdf_path = os.path.join(TEMP_DOWNLOAD_DIR, expected_rrdf)
+                print("Download complete.")
 
-        # --- 4. Delete from Scanner ---
-        # print(f"\nDeleting '{latest_exam_folder}' from the remote server...")
-        # stdin, stdout, stderr = ssh.exec_command(f"rm -r {remote_path}")
-        # if stdout.channel.recv_exit_status() == 0:
-        #     print(f"'{latest_exam_folder}' successfully deleted from scanner.")
-        # else:
-        #     print(f"Error deleting from scanner: {stderr.read().decode('ascii').strip()}")
+                # --- 5. Relocate and Rename ---
+                relocate_rrdf_files_by_time(temp_local_rrdf_path, local_session_path)
+
+                # Optional: Delete from Scanner (Uncomment if desired)
+                # print(f"Deleting '{expected_rrdf}' from the remote server...")
+                # stdin, stdout, stderr = ssh.exec_command(f"rm -r {remote_path}")
+                # if stdout.channel.recv_exit_status() == 0:
+                #     print(f"'{expected_rrdf}' successfully deleted from scanner.")
+                # else:
+                #     print(f"Error deleting from scanner: {stderr.read().decode('ascii').strip()}")
+
+            else:
+                print(f"\nSkipping session: {os.path.basename(local_session_path)}")
+                print(f"  Reason: Expected RRDF folder '{expected_rrdf}' not found on the scanner.")
 
     finally:
-        # --- 5. Clean Up ---
+        # --- 6. Clean Up ---
         if os.path.exists(TEMP_DOWNLOAD_DIR):
             shutil.rmtree(TEMP_DOWNLOAD_DIR)
             print(f"\nCleaned up temporary directory: {TEMP_DOWNLOAD_DIR}")
