@@ -4,7 +4,7 @@
 # Hyperwheel - Complete Setup Script (for use from GitHub repo)
 # ==============================================================================
 # This script automates the full installation and configuration of the
-# Orthanc-to-Flywheel pipeline on a Raspberry Pi. It should be run with
+# Hyperfine-to-Flywheel pipeline on a Raspberry Pi. It should be run with
 # sudo privileges from within the cloned 'hyperwheel' repository directory.
 # ==============================================================================
 
@@ -27,7 +27,6 @@ print_step() {
 }
 
 # --- Main Setup Functions ---
-
 check_root() {
   if [ "$EUID" -ne 0 ]; then
     echo "Please run this script with sudo."
@@ -143,14 +142,16 @@ deploy_and_secure_files() {
   cp "$REPO_DIR"/config/usr_share_orthanc/.fw_keychain.json.template /usr/share/orthanc/.fw_keychain.json
 
   echo ""
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!! ACTION REQUIRED !!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "!v!v!v!v!v!v!v!v!v!v!v!v!v ACTION REQUIRED v!v!v!v!v!v!v!v!v!v!v!v!v!"
   echo "The script is now paused."
   echo "Please open a NEW terminal and manually edit the following two files"
   echo "with your site-specific details:"
   echo "  1. /usr/share/orthanc/routing.json      (Study routing)"
   echo "  2. /usr/share/orthanc/.fw_keychain.json (Flywheel API keys)"
+  echo "For detailed instructions on how to edit the files via command line,"
+  echo "follow the Setup Guide on the Hyperwheel GitHub repository."
   echo "Once you have saved your configurations, return here."
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "!^!^!^!^!^!^!^!^!^!^!^!^!^ ACTION REQUIRED ^!^!^!^!^!^!^!^!^!^!^!^!^!"
   read -p "Press [Enter] when completed..."
   
   echo "Applying final permissions..."
@@ -160,6 +161,24 @@ deploy_and_secure_files() {
   chmod 600 /usr/share/orthanc/.fw_keychain.json /usr/share/orthanc/export.lua /usr/share/orthanc/routing.json /usr/share/orthanc/network_config.json
   chmod 600 /etc/orthanc/orthanc.json /etc/orthanc/credentials.json
   chmod 700 /usr/share/orthanc/rrdf_sync.py
+}
+
+enforce_sudo_password() {
+  print_step "Enforcing sudo Password Security"
+  local sudoers_file="/etc/sudoers.d/010_pi-nopasswd"
+
+  if [ -f "$sudoers_file" ]; then
+    echo "Found $sudoers_file."
+    echo "Modifying rules to require a password for sudo commands..."
+    
+    # Use sed to safely replace NOPASSWD with PASSWD
+    sed -i 's/NOPASSWD:/PASSWD:/g' "$sudoers_file"
+    
+    echo "Security update applied successfully."
+  else
+    echo "Note: $sudoers_file not found."
+    echo "Sudo password rules may already be secure or managed elsewhere on this OS."
+  fi
 }
 
 finalize() {
@@ -186,6 +205,7 @@ main() {
   install_flywheel_cli
   setup_python_env
   deploy_and_secure_files
+  enforce_sudo_password
   finalize
 }
 

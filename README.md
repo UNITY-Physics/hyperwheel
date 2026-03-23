@@ -12,7 +12,7 @@ The system is built around an **Orthanc DICOM server** running on a Raspberry Pi
 
 The primary goals of this pipeline are:
 * To create a Flywheel-compatible, organized copy of all incoming DICOM data.
-* To automatically synchronize raw research data (RRDF, `.h5` files) from the scanner and associate it with the correct DICOM series.
+* To automatically synchronize research raw data (RRDF, `.h5` files) from the scanner and associate it with the correct DICOM series.
 * To securely upload the complete dataset (DICOM and RRDF files) to the correct Flywheel project.
 * To safely clean up local storage only after verifying a successful upload.
 
@@ -21,7 +21,7 @@ The primary goals of this pipeline are:
 
 When the pipeline is installed by the `setup.sh` script, all files are organized into the following structure on the Raspberry Pi. Understanding these locations is essential for troubleshooting and maintenance.
 
-```
+```text
 /
 |-- etc/
 |   `-- orthanc/
@@ -88,11 +88,11 @@ The process begins the moment a DICOM file is sent from the scanner.
 ### Phase 2: Study Upload (`OnStableStudy`)
 1.  After the final DICOM file of a study arrives, Orthanc waits for the `StableAge` of 60 seconds.
 2.  This triggers the `OnStableStudy` function in **`export.lua`**.
-3.  **RRDF Sync**: The script executes **`rrdf_sync.py`**. This Python script:
-    * Reads the scanner's IP address from the auto-generated `network_config.json`.
-    * Connects to the scanner via SSH.
-    * Finds and downloads the latest raw data folder.
-    * Matches RRDF files to DICOM acquisition folders using timestamps and renames them accordingly.
+3.  **RRDF Synchronisation**: The script executes **`rrdf_sync.py`** to pair RRDF with their corresponding DICOM series in the following way:
+    * Scans the staging area (`/var/lib/orthanc/export`) to identify recently exported DICOM session folders.
+    * Parses the acquisition timestamp from the DICOM folder name.
+    * Connects to the scanner via SSH (`paramiko`) and requests *only* the specific `rrdf_YYYYMMDD_HHMMSS` folder that matches the local DICOM session.
+    * Once downloaded, the script reads the DICOM headers (`pydicom`) and matches individual RRDF files to their specific acquisition subfolders by comparing timestamps and renames them accordingly.
 4.  **Flywheel Upload**: The script reads `routing.json` and `.fw_keychain.json` to get the correct destination and API key. It then logs in and runs `fw import` to upload the entire study from the staging area.
 
 
@@ -102,8 +102,6 @@ The process begins the moment a DICOM file is sent from the scanner.
 3.  **Safe Deletion**:
     * If **every single file** is verified, the script deletes the data from the local staging area (`/export`) and then from Orthanc's internal database (`/db-v6/`).
     * If even one file cannot be verified, **no deletion occurs**, and all local data is preserved for manual inspection.
-
-
 
 ### Sources
 * Flywheel CLI: https://flywheel-io.gitlab.io/tools/app/cli/fw-beta/
@@ -117,25 +115,27 @@ The process begins the moment a DICOM file is sent from the scanner.
 
 The entire setup process is automated by the `setup.sh` script.
 
-1.  **Clone the Repository**
+1.  **Connect the Raspberry Pi to the scanner via Ethernet.**
+
+2.  **Clone the Repository**
     ```bash
-    git clone https://github.com/UNITY-Physics/hyperwheel.git
+    git clone [https://github.com/UNITY-Physics/hyperwheel.git](https://github.com/UNITY-Physics/hyperwheel.git)
     ```
 
 2.  **Run the Setup Script**
-    Connect the Raspberry Pi to the scanner via Ethernet, then run the setup script from within the cloned directory.
     ```bash
     cd hyperwheel
     chmod +x setup.sh
     sudo ./setup.sh
     ```
-3.  **Configure Your Credentials**
+    
+    **Configure Your Credentials**
     The script will pause and prompt you to edit two files in a separate terminal. You must fill these in with your site-specific details:
     * `/usr/share/orthanc/routing.json`
     * `/usr/share/orthanc/.fw_keychain.json`
 
     *routing.json* example:
-    ```bash
+    ```json
     {
         "prisma": "fw://prisma/PRISMA-Gothenburg",
         "aphrc": "fw://global_map/APHRC-Stockholm"
@@ -145,7 +145,7 @@ The entire setup process is automated by the `setup.sh` script.
 
 
     *.fw_keychain.json* example:
-    ```bash
+    ```json
     {
         "prisma": "bmgf.flywheel.io:AZw9R5EAG5hVwVd1s7opdE5yKZeVzR1avBdjhw6ZNVaAd5ZEwT95cSmr",
         "aphrc": "bmgf.flywheel.io:5Z5EdRhw9Vz71AoZhwVm5yETKaVprAvzN6d1eVdBVRwSvjE1S9d5Aso"
@@ -153,25 +153,7 @@ The entire setup process is automated by the `setup.sh` script.
     ```
     To generate an API key, click your profile icon in the top left and scroll to the bottom of the page. Use Google Chrome.
 
-    
-4.  **Enforce `sudo` Password**
-
-    For added security, require a password for administrative commands.
-    * Access the file that controls password rules for users
-    ```bash
-    sudo visudo /etc/sudoers.d/010_pi-nopasswd
-    ```
-
-    * Find the line
-    
-    `<your_username> ALL=(ALL) NOPASSWD: ALL`
-    
-    and change it to
-    
-    `<your_username> ALL=(ALL) PASSWD: ALL`
-
-5.  **Monitor Activity**
-
+3.  **Monitor Activity**
     The setup is complete. The pipeline's activity can be monitored by watching the Orthanc log:
     ```bash
     sudo tail -f /var/log/orthanc/Orthanc.log
