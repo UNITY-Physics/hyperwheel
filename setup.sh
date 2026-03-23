@@ -120,7 +120,7 @@ setup_python_env() {
   fi
   
   echo "Installing Python packages..."
-  sudo -u "$ORTHANC_USER" sh -c "$PYTHON_ENV_DIR/bin/pip install paramiko pydicom scp"
+  sudo -u "$ORTHANC_USER" sh -c "$PYTHON_ENV_DIR/bin/pip install paramiko pydicom scp flask gunicorn"
 }
 
 deploy_and_secure_files() {
@@ -181,6 +181,51 @@ enforce_sudo_password() {
   fi
 }
 
+setup_ipad_dashboard() {
+  print_step "Configuring iPad Dashboard & Hotspot"
+
+  echo "Creating systemd service for the Dashboard..."
+  cat <<EOF | sudo tee /etc/systemd/system/hyperwheel-dashboard.service > /dev/null
+[Unit]
+Description=Hyperwheel iPad Dashboard
+After=network-online.target NetworkManager.service orthanc.service
+Wants=network-online.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/usr/share/orthanc
+ExecStartPre=-/usr/sbin/rfkill unblock wifi
+ExecStartPre=-/usr/bin/nmcli connection up Hotspot
+ExecStart=/var/lib/orthanc/python_env/bin/gunicorn -w 2 -b 0.0.0.0:5000 dashboard:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  echo "Setting up iPad Wi-Fi Hotspot on wlan0..."
+  rfkill unblock wifi || true
+  ip link set wlan0 up || true
+
+  # Create Hotspot
+  nmcli device wifi hotspot ifname wlan0 ssid Hyperwheel-Dashboard password flyfine1 || true
+
+  # Ensure IP and Autoconnect are permanently set
+  nmcli connection modify Hotspot ipv4.addresses 192.168.99.1/24 || true
+  nmcli connection modify Hotspot ipv4.method shared || true
+  nmcli connection modify Hotspot connection.autoconnect yes || true
+  nmcli connection up Hotspot || true
+
+  echo "Enabling dashboard service..."
+  systemctl daemon-reload
+  systemctl enable hyperwheel-dashboard
+  systemctl start hyperwheel-dashboard
+  
+  echo "Dashboard setup complete. Accessible at http://192.168.99.1:5000"
+}
+
 finalize() {
   print_step "Finalizing Installation"
   echo "Enabling and restarting the Orthanc service..."
@@ -206,6 +251,7 @@ main() {
   setup_python_env
   deploy_and_secure_files
   enforce_sudo_password
+  setup_ipad_dashboard
   finalize
 }
 
