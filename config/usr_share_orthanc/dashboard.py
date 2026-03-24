@@ -5,7 +5,7 @@ import re
 
 app = Flask(__name__)
 
-# File paths
+# System configurations and paths
 LOG_FILE = "/var/log/orthanc/Orthanc.log"
 EXPORT_DIR = "/var/lib/orthanc/export/"
 
@@ -16,7 +16,7 @@ HTML_PAGE = """
     <title>Hyperwheel Monitor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
     <style>
-        /* iOS Settings Light Mode Theme */
+        /* Light theme variables */
         :root {
             --bg-color: #F2F2F7;       
             --card-color: #FFFFFF;     
@@ -28,33 +28,33 @@ HTML_PAGE = """
             --border-color: #E5E5EA;   
         }
         
-        * { box-sizing: border-box; } /* Ensures padding doesn't push elements off-screen */
+        * { box-sizing: border-box; }
 
         body { background-color: var(--bg-color); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 24px; }
         
-        /* Removed the 800px lock - now it flows naturally to the device width */
+        /* Layout containers */
         .container { width: 100%; max-width: 1400px; margin: 0 auto; }
-        
         .header-title { font-size: 14px; font-weight: 400; color: var(--text-sub); margin-bottom: 8px; margin-left: 16px; text-transform: uppercase; letter-spacing: -0.2px; }
         
-        /* iOS Style Card */
+        /* Main status card */
         .card { background-color: var(--card-color); border-radius: 12px; padding: 32px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        
         .status-header { font-size: 32px; font-weight: 600; margin-bottom: 6px; letter-spacing: -0.5px; }
         .status-subtext { color: var(--text-sub); font-size: 17px; margin-bottom: 28px; font-weight: 400; }
         
-        /* Metadata Box Styling */
+        /* Metadata display block */
         .metadata-box { background: var(--bg-color); border-radius: 10px; padding: 20px; margin-top: 24px; margin-bottom: 28px; border: 1px solid var(--border-color); }
         .meta-row { display: flex; margin-bottom: 12px; font-size: 16px; }
         .meta-row:last-child { margin-bottom: 0; }
         .meta-label { color: var(--text-sub); width: 140px; flex-shrink: 0; }
         .meta-value { color: var(--text-main); font-weight: 500; }
 
+        /* Pipeline step indicators */
         .step { display: flex; align-items: flex-start; margin-bottom: 24px; font-size: 18px; transition: color 0.3s ease; }
         .step-icon { width: 28px; height: 28px; border-radius: 50%; border: 2px solid; display: flex; align-items: center; justify-content: center; margin-right: 18px; font-weight: bold; font-size: 15px; flex-shrink: 0; transition: all 0.3s ease; margin-top: -3px; }
         .step-content { display: flex; flex-direction: column; }
         .step-subtext { font-size: 15px; color: var(--text-sub); margin-top: 6px; display: none; }
         
+        /* Step states */
         .pending { color: var(--text-dim); }
         .pending .step-icon { border-color: var(--text-dim); }
         .active { color: var(--text-main); font-weight: 500; }
@@ -62,7 +62,7 @@ HTML_PAGE = """
         .completed { color: var(--text-main); }
         .completed .step-icon { border-color: var(--accent-green); background-color: var(--accent-green); color: #FFFFFF; border: none; width: 32px; height: 32px; margin-left: -2px; margin-right: 16px;}
 
-        /* Restored Apple-style Bordered Button */
+        /* Diagnostics toggle button */
         .adv-btn { 
             background: var(--card-color); 
             color: var(--accent-blue); 
@@ -81,6 +81,7 @@ HTML_PAGE = """
         .adv-btn:hover { background: #FAFAFA; }
         .adv-btn:active { opacity: 0.6; transform: scale(0.98); }
         
+        /* Raw log viewer */
         #log-container { display: none; margin-top: 20px; width: 100%; }
         pre { background: #1C1C1E; color: #32D74B; padding: 20px; border-radius: 12px; overflow-y: scroll; height: 350px; font-size: 14px; font-family: "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; word-wrap: break-word; width: 100%; }
 
@@ -105,7 +106,7 @@ HTML_PAGE = """
                 <div id="step-receive" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Receiving DICOM Data</div><div class="step-subtext" id="subtext-receive">Waiting for study to become stable...</div></div></div>
                 <div id="step-sync" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Fetching Raw Data (RRDF)</div></div></div>
                 <div id="step-upload" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Uploading to Flywheel</div></div></div>
-                <div id="step-verify" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Verifying & Cleaning Up</div></div></div>
+                <div id="step-verify" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Verifying Flywheel Upload</div></div></div>
             </div>
         </div>
         <button class="adv-btn" onclick="toggleLogs()">Show Advanced Diagnostics</button>
@@ -218,12 +219,18 @@ HTML_PAGE = """
 
 @app.route('/')
 def home():
+    """Serve the primary HTML interface."""
     return render_template_string(HTML_PAGE)
 
 @app.route('/api/status')
 def get_status():
+    """
+    Parse system logs and directory structures to determine the 
+    current operational state of the DICOM/RRDF processing pipeline.
+    """
     logs_raw = "Could not read logs."
     try:
+        # Retrieve recent logs to ensure CLI progress bars do not truncate the operational history
         logs_raw = subprocess.check_output(['tail', '-n', '600', LOG_FILE]).decode('utf-8')
     except Exception:
         pass
@@ -233,6 +240,7 @@ def get_status():
     project_name = "Unknown"
     session_raw = ""
 
+    # Parse staging directory for active files and study metadata
     try:
         if os.path.exists(EXPORT_DIR):
             for root, dirs, files in os.walk(EXPORT_DIR):
@@ -251,6 +259,7 @@ def get_status():
                     if len(parts) >= 3 and project_name == "Unknown":
                         project_name = parts[0].upper()
                     
+                    # Extract session timestamp using regex
                     if session_raw == "":
                         for p in parts:
                             if re.match(r'\d{4}-\d{2}-\d{2}_\d{2}_\d{2}_\d{2}', p):
@@ -268,12 +277,14 @@ def get_status():
         except:
             session_formatted = session_raw
 
+    # Sanitize carriage returns generated by CLI progress bars
     lines = logs_raw.replace('\r', '\n').splitlines()
     
     export_state = "idle"
     success_idx = -1
     receive_idx = -1
 
+    # Chronologically parse log events to determine the active pipeline phase
     for i, line in enumerate(lines):
         if "A study has become stable" in line:
             export_state = "queued"
@@ -290,8 +301,10 @@ def get_status():
         if "Exported instance" in line:
             receive_idx = i
 
+    # Verify if a new transmission sequence has begun after a prior success
     is_receiving = receive_idx > success_idx
 
+    # Recover study metadata from logs if the local staging directory has already been cleaned
     if (dicom_count + rrdf_count) == 0 and export_state == "success":
         for line in reversed(lines):
             if "Storage /var/lib/orthanc/export/" in line and project_name == "Unknown":
@@ -306,6 +319,7 @@ def get_status():
                 except:
                     session_formatted = s_raw
 
+    # Resolve final application state
     state = "idle"
     if (dicom_count + rrdf_count) > 0:
         if export_state in ["syncing", "uploading", "verifying"]:
@@ -329,6 +343,7 @@ def get_status():
         "logs": logs_raw
     })
 
+# Disable client-side caching to guarantee real-time UI updates
 @app.after_request
 def add_header(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'

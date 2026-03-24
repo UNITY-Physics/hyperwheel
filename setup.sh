@@ -210,7 +210,7 @@ EOF
   ip link set wlan0 up || true
 
   # Create Hotspot
-  nmcli device wifi hotspot ifname wlan0 ssid Hyperwheel-Dashboard password flyfine1 || true
+  nmcli device wifi hotspot ifname wlan0 ssid Hyperwheel password '#2020Imaging' || true
 
   # Ensure IP and Autoconnect are permanently set
   nmcli connection modify Hotspot ipv4.addresses 192.168.99.1/24 || true
