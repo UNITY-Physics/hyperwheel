@@ -152,7 +152,7 @@ deploy_and_secure_files() {
   echo "follow the Setup Guide on the Hyperwheel GitHub repository."
   echo "Once you have saved your configurations, return here."
   echo "!^!^!^!^!^!^!^!^!^!^!^!^!^ ACTION REQUIRED ^!^!^!^!^!^!^!^!^!^!^!^!^!"
-  read -p "Press [Enter] when completed..."
+  read -p "Press [Enter] when required action is completed..."
   
   echo "Applying final permissions..."
   chown -R orthanc:orthanc /usr/share/orthanc/
@@ -184,6 +184,36 @@ enforce_sudo_password() {
 setup_ipad_dashboard() {
   print_step "Configuring iPad Dashboard & Hotspot"
 
+  # Prompt the user for their country code (Defaults to GB)
+  # echo "To comply with local Wi-Fi regulations, please enter your 2-letter country code (e.g., US, GB, SE, KE):"
+  # read -p "Country Code: " WIFI_COUNTRY
+  # WIFI_COUNTRY=${WIFI_COUNTRY:-GB}
+
+  # Ensure it is uppercase
+  # WIFI_COUNTRY=$(echo "$WIFI_COUNTRY" | tr '[:lower:]' '[:upper:]')
+
+  # echo "Setting up iPad Wi-Fi Hotspot on wlan0 (Region: $WIFI_COUNTRY)..."
+  
+  # 1. Set Wi-Fi Country to legally unlock the antenna
+  # raspi-config nonint do_wifi_country "GB" || true
+  
+  # 2. Force the radio unblocked at the hardware and NetworkManager level
+  rfkill unblock wifi || true
+  nmcli radio wifi on || true
+  
+  # 3. Give the hardware 3 seconds to physically initialize
+  sleep 3 
+  ip link set wlan0 up || true
+
+  # 4. Create Hotspot (Hardcoded)
+  nmcli device wifi hotspot ifname wlan0 ssid Hyperwheel password '#2020Imaging' || true
+
+  # 5. Ensure IP and Autoconnect are permanently set
+  nmcli connection modify Hotspot ipv4.addresses 192.168.99.1/24 || true
+  nmcli connection modify Hotspot ipv4.method shared || true
+  nmcli connection modify Hotspot connection.autoconnect yes || true
+  nmcli connection up Hotspot || true
+
   echo "Creating systemd service for the Dashboard..."
   cat <<EOF | sudo tee /etc/systemd/system/hyperwheel-dashboard.service > /dev/null
 [Unit]
@@ -205,19 +235,6 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-  echo "Setting up iPad Wi-Fi Hotspot on wlan0..."
-  rfkill unblock wifi || true
-  ip link set wlan0 up || true
-
-  # Create Hotspot
-  nmcli device wifi hotspot ifname wlan0 ssid Hyperwheel password '#2020Imaging' || true
-
-  # Ensure IP and Autoconnect are permanently set
-  nmcli connection modify Hotspot ipv4.addresses 192.168.99.1/24 || true
-  nmcli connection modify Hotspot ipv4.method shared || true
-  nmcli connection modify Hotspot connection.autoconnect yes || true
-  nmcli connection up Hotspot || true
-
   echo "Enabling dashboard service..."
   systemctl daemon-reload
   systemctl enable hyperwheel-dashboard
@@ -229,13 +246,12 @@ EOF
 finalize() {
   print_step "Finalizing Installation"
   echo "Enabling and restarting the Orthanc service..."
-  systemctl enable --now orthanc
-  
+  systemctl enable orthanc
+  systemctl restart orthanc
   echo ""
   echo "------------------------------------------------------------"
-  echo "Setup Complete! Please reboot "
+  echo "Setup Complete! The pipeline is now running."
   echo "------------------------------------------------------------"
-  echo "The pipeline is now running."
   echo ""
   echo "To monitor the system, run:"
   echo "  sudo tail -f /var/log/orthanc/Orthanc.log"
