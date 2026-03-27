@@ -119,7 +119,7 @@ The entire setup process is automated by the `setup.sh` script.
 
 2.  **Clone the Repository**
     ```bash
-    git clone [https://github.com/UNITY-Physics/hyperwheel.git](https://github.com/UNITY-Physics/hyperwheel.git)
+    git clone https://github.com/UNITY-Physics/hyperwheel.git
     ```
 
 2.  **Run the Setup Script**
