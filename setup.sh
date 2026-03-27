@@ -103,14 +103,23 @@ EOL
 }
 
 install_flywheel_cli() {
-  print_step "Installing Flywheel CLI"
+  print_step "Installing and Configuring Flywheel CLI"
+  
   if [ -f "$FW_CLI_DIR/fw-beta" ]; then
-    echo "Flywheel CLI already installed. Skipping."
+    echo "Flywheel CLI already installed. Skipping installation."
   else
+    # Install the CLI as the orthanc user
     sudo -u "$ORTHANC_USER" sh -c "curl -sSL https://storage.googleapis.com/flywheel-dist/fw-cli/0.29/install.sh | FW_CLI_INSTALL_DIR=$FW_CLI_DIR/ sh"
   fi
-}
 
+  echo "Applying Flywheel configurations..."
+  
+  # Disable auto-updates and compatibility checks, executing as the orthanc user
+  sudo -u "$ORTHANC_USER" "$FW_CLI_DIR/fw-beta" config set disable_auto_update true
+  sudo -u "$ORTHANC_USER" "$FW_CLI_DIR/fw-beta" config set disable_compatibility_check true
+  
+  echo "Flywheel CLI installed and configured successfully."
+}
 setup_python_env() {
   print_step "Setting up Python Environment"
   if [ -d "$PYTHON_ENV_DIR" ]; then
