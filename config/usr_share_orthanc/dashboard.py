@@ -98,7 +98,7 @@ HTML_PAGE = """
                 <div id="step-receive" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Receiving DICOM Data</div><div class="step-subtext" id="subtext-receive">Waiting for study to become stable...</div></div></div>
                 <div id="step-sync" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Fetching Raw Data (RRDF)</div></div></div>
                 <div id="step-upload" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Uploading to Flywheel</div></div></div>
-                <div id="step-verify" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Verifying & Cleaning Up</div></div></div>
+                <div id="step-verify" class="step pending"><div class="step-icon"></div><div class="step-content"><div class="step-text">Verifying Flywheel Upload</div></div></div>
             </div>
         </div>
         
@@ -353,7 +353,7 @@ def get_status():
             error_msg = ""
         elif "Executing RRDF" in line or "Starting RRDF" in line or "RRDF sync finished" in line:
             if not has_error: export_state = "syncing"
-        elif "Logging into Flywheel" in line or "Executing Flywheel Import" in line or "Import command finished" in line:
+        elif "Processing Project:" in line or "Logging into Flywheel" in line or "Executing Flywheel Import" in line or "Import command finished" in line:
             if not has_error: export_state = "uploading"
         elif "Starting File Verification" in line or "[CHECK] Local file" in line:
             if not has_error: export_state = "verifying"
