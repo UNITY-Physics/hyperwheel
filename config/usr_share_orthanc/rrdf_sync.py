@@ -3,7 +3,7 @@ hyperwheel_rrdf_sync.py
 
 For Project Hyperwheel
 
-This script automates the synchronization of raw research data files (.h5)
+This script automates the synchronization of raw research data files (RRDF)
 from a Hyperfine MRI scanner to the local data server.
 
 Workflow:
@@ -11,9 +11,9 @@ Workflow:
 2.  Connects to the scanner via SSH using paramiko.
 3.  For each local session, looks for a matching RRDF folder on the scanner.
 4.  Downloads the matching RRDF folder via SCP.
-5.  Matches each downloaded .h5 file to its corresponding DICOM acquisition
-    folder by comparing timestamps.
-6.  Relocates the .h5 file and renames it to match the acquisition.
+5.  Matches each downloaded RRDF file to its corresponding DICOM acquisition
+    folder by checking if its timestamp falls within the Acquisition Window.
+6.  Relocates the RRDF file without renaming it.
 7.  Performs special renaming for CALIPR series DICOM files.
 """
 import paramiko
@@ -93,24 +93,38 @@ def rename_calipr_dicom_files(acquisition_folder_path):
 
 
 def get_dicom_acquisition_times(session_path):
-    """Scans a session's subfolders to extract acquisition datetimes from DICOM metadata."""
-    acq_times = {}
+    """Scans a session's subfolders to extract acquisition windows (start and end) from DICOM metadata."""
+    acq_windows = {}
     for folder_path in glob.glob(os.path.join(session_path, '*/')):
         dicom_files = glob.glob(os.path.join(folder_path, '*.dcm'))
         if not dicom_files:
             continue
         try:
             dcm = pydicom.dcmread(dicom_files[0])
-            # Use AcquisitionDateTime for precise matching.
-            acq_datetime = datetime.datetime.strptime(dcm.AcquisitionDateTime, "%Y%m%d%H%M%S.%f")
-            acq_times[folder_path] = acq_datetime
+            
+            # 1. Parse AcquisitionDateTime (Start Time)
+            # Handle potential fractional seconds safely
+            acq_dt_str = dcm.AcquisitionDateTime
+            try:
+                acq_start = datetime.datetime.strptime(acq_dt_str, "%Y%m%d%H%M%S.%f")
+            except ValueError:
+                acq_start = datetime.datetime.strptime(acq_dt_str.split('.')[0], "%Y%m%d%H%M%S")
+            
+            # 2. Parse AcquisitionDuration
+            acq_dur_str = getattr(dcm, 'AcquisitionDuration', 0)
+            acq_duration_sec = float(acq_dur_str)
+            
+            # 3. Calculate End Time
+            acq_end = acq_start + datetime.timedelta(seconds=acq_duration_sec)
+            
+            acq_windows[folder_path] = (acq_start, acq_end)
         except Exception as e:
             print(f"Warning: Could not read DICOM metadata for {dicom_files[0]}. Error: {e}")
-    return acq_times
+    return acq_windows
 
 
 def parse_rrdf_timestamps(rrdf_folder_path):
-    """Parses timestamps from the filenames of .h5 files."""
+    """Parses timestamps from the filenames of RRDF files."""
     rrdf_times = {}
     for file_path in glob.glob(os.path.join(rrdf_folder_path, '*.h5')):
         filename = os.path.basename(file_path)
@@ -123,41 +137,38 @@ def parse_rrdf_timestamps(rrdf_folder_path):
 
 
 def relocate_rrdf_files_by_time(temp_download_path, dicom_session_path):
-    """Moves each .h5 file to the DICOM acquisition folder with the closest timestamp."""
+    """Moves each RRDF file to the DICOM acquisition folder if its timestamp falls within the DICOM's time window."""
     print(f"\n--- Starting RRDF Relocation for Session: {os.path.basename(dicom_session_path)} ---")
-    dicom_acq_times = get_dicom_acquisition_times(dicom_session_path)
+    
+    # Get the time windows (start and end) for each DICOM folder
+    dicom_acq_windows = get_dicom_acquisition_times(dicom_session_path)
+    # Get the extracted timestamps for each RRDF file
     rrdf_file_times = parse_rrdf_timestamps(temp_download_path)
 
     for rrdf_path, rrdf_time in rrdf_file_times.items():
-        best_match_folder, min_time_diff = None, datetime.timedelta(days=1)
-        # Find the DICOM acquisition with the minimum time difference.
-        for folder_path, dicom_datetime in dicom_acq_times.items():
-            time_diff = abs(dicom_datetime - rrdf_time)
-            if time_diff < min_time_diff:
-                min_time_diff, best_match_folder = time_diff, folder_path
+        matched_folder = None
+        
+        # Check if the RRDF file time falls within any DICOM acquisition window
+        for folder_path, (acq_start, acq_end) in dicom_acq_windows.items():
+            if acq_start <= rrdf_time <= acq_end:
+                matched_folder = folder_path
+                break  # Stop searching once a valid window is found
 
-        # Relocate if a close match is found (e.g., within 1 minute).
-        if best_match_folder and min_time_diff < datetime.timedelta(minutes=1):
+        if matched_folder:
             original_rrdf_filename = os.path.basename(rrdf_path)
-            dest_foldername = os.path.basename(os.path.normpath(best_match_folder))
+            dest_foldername = os.path.basename(os.path.normpath(matched_folder))
             try:
                 print(f"Match found: Moving '{original_rrdf_filename}' -> '{dest_foldername}'")
-                shutil.move(rrdf_path, best_match_folder)
-
-                # Rename the moved .h5 file to match its new parent folder name.
-                moved_h5_path = os.path.join(best_match_folder, original_rrdf_filename)
-                new_h5_name = f"{dest_foldername}.h5"
-                final_h5_path = os.path.join(best_match_folder, new_h5_name)
-                print(f"  Renaming '{original_rrdf_filename}' -> '{new_h5_name}'")
-                os.rename(moved_h5_path, final_h5_path)
+                # Move the file without renaming it
+                shutil.move(rrdf_path, matched_folder)
 
                 # If this is a CALIPR acquisition, trigger special DICOM renaming.
                 if 'calipr' in dest_foldername.lower():
-                    rename_calipr_dicom_files(best_match_folder)
+                    rename_calipr_dicom_files(matched_folder)
             except Exception as e:
-                print(f"  An error occurred during move/rename: {e}")
+                print(f"  An error occurred during move: {e}")
         else:
-            print(f"Warning: No close time match for '{os.path.basename(rrdf_path)}'. Not moved.")
+            print(f"Warning: '{os.path.basename(rrdf_path)}' (Timestamp: {rrdf_time}) did not fall within any DICOM acquisition window. Not moved.")
 
 
 def find_local_dicom_sessions(base_export_path):

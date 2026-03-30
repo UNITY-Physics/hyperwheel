@@ -411,7 +411,7 @@ function OnStableStudy(studyId, tags, metadata)
           local login_output = ExecuteAndLog(login_command)
 
           if not string.find(login_output, "Logged in to") then
-            print('[ERROR] Flywheel login FAILED for ' .. string.upper(projName) .. '. Skipping.')
+            print('[ERROR] Flywheel login FAILED for ' .. string.upper(projName) .. '. Please check API key and network connection. Aborting sync.')
           else
             print('Flywheel login successful.')
 
