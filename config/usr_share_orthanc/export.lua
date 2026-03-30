@@ -190,6 +190,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
       relative_dir = string.gsub(relative_dir, "/$", "") 
       
       local fw_uri_to_list = fw_project_uri .. '/' .. relative_dir
+      print('[FETCH] Listing files from: ' .. fw_uri_to_list)
       local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
 
