@@ -158,7 +158,7 @@ end
 
 -- Queries Flywheel to ensure files actually uploaded successfully. 
 -- Instantly deletes verified local files and uses .id sidecars to clear Orthanc's internal DB.
-function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
+function VerifyAndCleanupStudy(local_study_path, fw_project_uri, projectPath)
   print('--- Starting File Verification for ' .. local_study_path .. ' ---')
 
   local remoteDirCache = {}
@@ -186,10 +186,17 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
       print('[CACHE MISS] Fetching remote list for directory: ' .. local_dir)
 
       -- Construct the remote URI for the parent directory
-      local relative_dir = string.gsub(local_dir, local_study_path .. '/', '')
-      relative_dir = string.gsub(relative_dir, "/$", "") -- Remove trailing slash
-      local fw_uri_to_list = fw_project_uri .. '/' .. relative_dir
+      -- 1. Extract the part of local_dir that comes after projPath
+      local sub_path = string.sub(local_dir, string.len(projPath) + 1)
 
+      -- 2. Ensure the sub_path starts with a single slash if it doesn't already
+      if string.sub(sub_path, 1, 1) ~= "/" then
+        sub_path = "/" .. sub_path
+      end
+      
+      -- 3. Combine the base URI with the subpath
+      local fw_uri_to_list = fw_project_uri .. sub_path
+      
       print('[FETCH] Listing files from: ' .. fw_uri_to_list)
       local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
@@ -433,7 +440,7 @@ function OnStableStudy(studyId, tags, metadata)
             if sessionsCmd then
               for sessionPath in sessionsCmd:lines() do
                 -- Execute the cleanup validation
-                local cleanup_successful = VerifyAndCleanupStudy(sessionPath, fw_project_uri)
+                local cleanup_successful = VerifyAndCleanupStudy(sessionPath, fw_project_uri, projPath)
 
                 if cleanup_successful then
                   print('[SUCCESS] All local files verified and purged for: ' .. sessionPath)
