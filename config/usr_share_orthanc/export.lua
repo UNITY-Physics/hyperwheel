@@ -186,17 +186,20 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
       print('[CACHE MISS] Fetching remote list for directory: ' .. local_dir)
 
       -- Construct the remote URI for the parent directory
-      -- 1. Extract the part of local_dir that comes after project_path
+      -- Extract the part of local_dir that comes after project_path
       local sub_path = string.sub(local_dir, string.len(project_path) + 1)
 
-      -- 2. Ensure the sub_path starts with a single slash if it doesn't already
+      -- Ensure the sub_path starts with a single slash if it doesn't already
       if string.sub(sub_path, 1, 1) ~= "/" then
         sub_path = "/" .. sub_path
       end
       
-      -- 3. Combine the base URI with the subpath
+      -- Combine the base URI with the subpath
       local fw_uri_to_list = fw_project_uri .. sub_path
       
+      -- Strip the trailing slash
+      sub_path = string.gsub(sub_path, "/$", "")
+
       print('[FETCH] Listing files from: ' .. fw_uri_to_list)
       local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
