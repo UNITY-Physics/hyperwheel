@@ -3,18 +3,15 @@ hyperwheel_rrdf_sync.py
 
 For Project Hyperwheel
 
-This script automates the synchronization of raw research data files (RRDF)
-from a Hyperfine MRI scanner to the local data server.
+This script automatically downloads RRDF files (.h5) from the Hyperfine scanner
+and matches them to the correct DICOM folders on the local server.
 
-Workflow:
-1.  Scans the local DICOM export directory to find existing session folders.
-2.  Connects to the scanner via SSH using paramiko.
-3.  For each local session, looks for a matching RRDF folder on the scanner.
-4.  Downloads the matching RRDF folder via SCP.
-5.  Matches each downloaded RRDF file to its corresponding DICOM acquisition
-    folder by checking if its timestamp falls within the Acquisition Window.
-6.  Relocates the RRDF file without renaming it.
-7.  Performs special renaming for CALIPR series DICOM files.
+How the matching works:
+1. It reads the exact time the DICOM was taken from its metadata.
+2. It reads the exact time the RRDF file was created from its filename.
+3. Phase 1 (Exact Match): It pairs files and folders that have the exact same time.
+4. Phase 2 (Sweep Forward): For leftover RRDF files (like DWI X, Y, Z planes), it puts 
+   them into the folder with the very next DICOM that was created.
 """
 import paramiko
 from scp import SCPClient
@@ -27,22 +24,22 @@ import re
 import pydicom
 import json
 
-# --- Configuration ---
+# --- System Configuration ---
 DICOM_EXPORT_ROOT = '/var/lib/orthanc/export'
 TEMP_DOWNLOAD_DIR = '/tmp/rrdf_download'
 NETWORK_CONFIG_PATH = '/usr/share/orthanc/network_config.json'
 
-# Scanner connection details (IP is loaded dynamically)
+# Scanner connection parameters (IP is loaded dynamically)
 SWOOP_PORT, SWOOP_USER, SWOOP_PASS = 25125, 'rrdf', 'RawSCP'
 
 def get_scanner_ip():
-    """Reads the scanner IP from the network config file."""
+    """Reads the scanner IP address from the network config file."""
     try:
         with open(NETWORK_CONFIG_PATH, 'r') as f:
             config = json.load(f)
             return config['scanner_ip']
     except FileNotFoundError:
-        print(f"Error: Network config file not found at {NETWORK_CONFIG_PATH}")
+        print(f"Error: Network configuration file not found at {NETWORK_CONFIG_PATH}")
         print("Please run the setup_network.sh script first.")
         sys.exit(1)
     except (json.JSONDecodeError, KeyError):
@@ -52,135 +49,174 @@ def get_scanner_ip():
 
 def rename_calipr_dicom_files(acquisition_folder_path):
     """
-    Renames the two DICOM files in a CALIPR acquisition folder based on
-    their ContentTime tag, identifying them as protonDensity and T2map.
+    CALIPR scans produce two DICOM files. This function figures out which is which 
+    based on the time they were created and renames them to '_protonDensity' and '_T2map'.
     """
-    print(f"  Performing special CALIPR DICOM renaming in: '{os.path.basename(os.path.normpath(acquisition_folder_path))}'")
+    print(f"  Renaming CALIPR DICOMs in: '{os.path.basename(os.path.normpath(acquisition_folder_path))}'")
 
-    # Find the two DICOM files in the folder.
     dcm_files = glob.glob(os.path.join(acquisition_folder_path, '*.dcm'))
     if len(dcm_files) != 2:
-        print(f"  Warning: Expected 2 DICOM files for CALIPR renaming, but found {len(dcm_files)}. Skipping.")
+        print(f"  Warning: Expected exactly 2 DICOM files for CALIPR, found {len(dcm_files)}. Skipping rename.")
         return
 
-    # Read the ContentTime from each file to determine its type.
     file_times = []
     try:
         for f_path in dcm_files:
             dcm = pydicom.dcmread(f_path)
+            # ContentTime tells us exactly when this specific image was generated
             content_time_str = dcm.ContentTime
             file_times.append({'path': f_path, 'time': float(content_time_str)})
     except Exception as e:
         print(f"  Error reading ContentTime from CALIPR DICOMs: {e}. Skipping rename.")
         return
 
-    # Sort by time: the earlier file is protonDensity, the later is T2map.
+    # Sort chronologically: the first image is protonDensity, the second is the T2map.
     file_times.sort(key=lambda x: x['time'])
     protonDensity_path = file_times[0]['path']
     T2map_path = file_times[1]['path']
 
-    # Rename the files based on the acquisition folder's name.
     base_name = os.path.basename(os.path.normpath(acquisition_folder_path))
     new_protonDensity_path = os.path.join(acquisition_folder_path, f"{base_name}_protonDensity.dcm")
     new_T2map_path = os.path.join(acquisition_folder_path, f"{base_name}_T2map.dcm")
+    
     try:
-        print(f"  Renaming protonDensity file -> '{os.path.basename(new_protonDensity_path)}'")
+        print(f"  Renamed -> '{os.path.basename(new_protonDensity_path)}'")
         os.rename(protonDensity_path, new_protonDensity_path)
-        print(f"  Renaming T2map file -> '{os.path.basename(new_T2map_path)}'")
+        print(f"  Renamed -> '{os.path.basename(new_T2map_path)}'")
         os.rename(T2map_path, new_T2map_path)
     except Exception as e:
-        print(f"  Error during CALIPR DICOM rename: {e}")
+        print(f"  Error renaming CALIPR files: {e}")
 
 
-def get_dicom_acquisition_times(session_path):
-    """Scans a session's subfolders to extract acquisition windows (start and end) from DICOM metadata."""
-    acq_windows = {}
-    for folder_path in glob.glob(os.path.join(session_path, '*/')):
+def relocate_rrdf_files_securely(temp_download_path, dicom_session_path):
+    """
+    Matches RRDF files to their corresponding DICOM folders in two steps.
+    """
+    print(f"\n--- Matching RRDF files for Session: {os.path.basename(dicom_session_path)} ---")
+
+    # -------------------------------------------------------------------------
+    # Step 1: Read the exact time for every DICOM folder
+    # -------------------------------------------------------------------------
+    dicom_blocks = {} # Groups folders by their exact timestamp
+    
+    for folder_path in glob.glob(os.path.join(dicom_session_path, '*/')):
         dicom_files = glob.glob(os.path.join(folder_path, '*.dcm'))
         if not dicom_files:
             continue
         try:
-            dcm = pydicom.dcmread(dicom_files[0])
+            # stop_before_pixels makes reading the header much faster
+            dcm = pydicom.dcmread(dicom_files[0], stop_before_pixels=True)
             
-            # 1. Parse AcquisitionDateTime (Start Time)
-            # Handle potential fractional seconds safely
-            acq_dt_str = dcm.AcquisitionDateTime
-            try:
-                acq_start = datetime.datetime.strptime(acq_dt_str, "%Y%m%d%H%M%S.%f")
-            except ValueError:
-                acq_start = datetime.datetime.strptime(acq_dt_str.split('.')[0], "%Y%m%d%H%M%S")
-            
-            # 2. Parse AcquisitionDuration
-            acq_dur_str = getattr(dcm, 'AcquisitionDuration', 0)
-            acq_duration_sec = float(acq_dur_str)
-            
-            # 3. Calculate End Time
-            acq_end = acq_start + datetime.timedelta(seconds=acq_duration_sec)
-            
-            acq_windows[folder_path] = (acq_start, acq_end)
+            # Try to get AcquisitionDateTime, fallback to SeriesTime if it's missing
+            acq_dt_str = getattr(dcm, 'AcquisitionDateTime', None)
+            if not acq_dt_str:
+                date_str = getattr(dcm, 'SeriesDate', getattr(dcm, 'StudyDate', '19700101'))
+                time_str = getattr(dcm, 'SeriesTime', '000000')
+                acq_dt_str = date_str + time_str
+                
+            # Remove microseconds so we can match exactly down to the second
+            acq_dt_clean = acq_dt_str.split('.')[0]
+            acq_time = datetime.datetime.strptime(acq_dt_clean, "%Y%m%d%H%M%S")
+
+            folder_data = {
+                'path': folder_path,
+                'name': os.path.basename(os.path.normpath(folder_path)).lower()
+            }
+
+            if acq_time not in dicom_blocks:
+                dicom_blocks[acq_time] = []
+            dicom_blocks[acq_time].append(folder_data)
+
         except Exception as e:
-            print(f"Warning: Could not read DICOM metadata for {dicom_files[0]}. Error: {e}")
-    return acq_windows
+            print(f"  Warning: Could not read DICOM in {folder_path}. Error: {e}")
 
+    # -------------------------------------------------------------------------
+    # Step 2: Tie-breaker logic for folders with the exact same time
+    # -------------------------------------------------------------------------
+    def resolve_concurrent_acquisitions(folders):
+        """
+        If multiple DICOM folders have the exact same time (like a DWI and an ADC map),
+        this function picks the primary raw data folder by ignoring 'adc' and 'map'.
+        """
+        if len(folders) == 1:
+            return folders[0]['path']
+            
+        filtered = [f for f in folders if 'adc' not in f['name'] and 'map' not in f['name']]
+        # If everything got filtered out, just pick the first one as a safe default
+        return filtered[0]['path'] if filtered else folders[0]['path']
 
-def parse_rrdf_timestamps(rrdf_folder_path):
-    """Parses timestamps from the filenames of RRDF files."""
-    rrdf_times = {}
-    for file_path in glob.glob(os.path.join(rrdf_folder_path, '*.h5')):
-        filename = os.path.basename(file_path)
-        match = re.search(r'_(\d{8})_(\d{6})\.h5', filename)
-        if match:
-            date_part, time_part = match.groups()
-            rrdf_datetime = datetime.datetime.strptime(f"{date_part}{time_part}", "%Y%m%d%H%M%S")
-            rrdf_times[file_path] = rrdf_datetime
-    return rrdf_times
-
-
-def relocate_rrdf_files_by_time(temp_download_path, dicom_session_path):
-    """Moves each RRDF file to the DICOM acquisition folder if its timestamp falls within the DICOM's time window."""
-    print(f"\n--- Starting RRDF Relocation for Session: {os.path.basename(dicom_session_path)} ---")
+    # -------------------------------------------------------------------------
+    # Step 3: Extract the exact creation time from the RRDF filenames
+    # -------------------------------------------------------------------------
+    rrdf_files = []
+    # Looks for the timestamp at the end of the filename: _YYYYMMDD_HHMMSS.h5
+    rrdf_pattern = re.compile(r'_(\d{8}_\d{6})\.h5$') 
     
-    # Get the time windows (start and end) for each DICOM folder
-    dicom_acq_windows = get_dicom_acquisition_times(dicom_session_path)
-    # Get the extracted timestamps for each RRDF file
-    rrdf_file_times = parse_rrdf_timestamps(temp_download_path)
-
-    for rrdf_path, rrdf_time in rrdf_file_times.items():
-        matched_folder = None
-        
-        # Check if the RRDF file time falls within any DICOM acquisition window
-        for folder_path, (acq_start, acq_end) in dicom_acq_windows.items():
-            if acq_start <= rrdf_time <= acq_end:
-                matched_folder = folder_path
-                break  # Stop searching once a valid window is found
-
-        if matched_folder:
-            original_rrdf_filename = os.path.basename(rrdf_path)
-            dest_foldername = os.path.basename(os.path.normpath(matched_folder))
+    for rrdf_path in glob.glob(os.path.join(temp_download_path, '*.h5')):
+        filename = os.path.basename(rrdf_path)
+        match = rrdf_pattern.search(filename)
+        if match:
             try:
-                print(f"Match found: Moving '{original_rrdf_filename}' -> '{dest_foldername}'")
-                # Move the file without renaming it
-                shutil.move(rrdf_path, matched_folder)
-
-                # If this is a CALIPR acquisition, trigger special DICOM renaming.
-                if 'calipr' in dest_foldername.lower():
-                    rename_calipr_dicom_files(matched_folder)
-            except Exception as e:
-                print(f"  An error occurred during move: {e}")
+                # Reading the time from the filename is much safer than checking file creation dates
+                rrdf_time = datetime.datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+                rrdf_files.append({'path': rrdf_path, 'filename': filename, 'time': rrdf_time})
+            except ValueError:
+                print(f"  Warning: Could not parse the time from filename {filename}")
         else:
-            print(f"Warning: '{os.path.basename(rrdf_path)}' (Timestamp: {rrdf_time}) did not fall within any DICOM acquisition window. Not moved.")
+            print(f"  Warning: No timestamp found in filename {filename}")
+
+    # Sort chronologically so we process them in the order they were scanned
+    rrdf_files.sort(key=lambda x: x['time'])
+
+    # -------------------------------------------------------------------------
+    # Step 4: Phase 1 - Exact Matches
+    # -------------------------------------------------------------------------
+    unmatched_rrdfs = []
+    for rrdf in rrdf_files:
+        # If the RRDF timestamp perfectly matches a DICOMs timestamp, move it there
+        if rrdf['time'] in dicom_blocks:
+            target_folder = resolve_concurrent_acquisitions(dicom_blocks[rrdf['time']])
+            dest_foldername = os.path.basename(target_folder)
+            print(f"Exact match: Moving '{rrdf['filename']}' -> '{dest_foldername}'")
+            shutil.move(rrdf['path'], target_folder)
+            
+            # If we just moved files into a CALIPR folder, trigger the renamer
+            if 'calipr' in dest_foldername.lower():
+                rename_calipr_dicom_files(target_folder)
+        else:
+            # Save files without an exact match for Phase 2
+            unmatched_rrdfs.append(rrdf)
+
+    # -------------------------------------------------------------------------
+    # Step 5: Phase 2 - Sweep Forward
+    # -------------------------------------------------------------------------
+    sorted_dicom_times = sorted(dicom_blocks.keys())
+    for rrdf in unmatched_rrdfs:
+        matched = False
+        # For leftover files (like single planes of a DWI scan), look forward in time
+        # and assign them to the very next DICOM folder that was created.
+        for dcm_time in sorted_dicom_times:
+            if dcm_time > rrdf['time']:
+                target_folder = resolve_concurrent_acquisitions(dicom_blocks[dcm_time])
+                dest_foldername = os.path.basename(target_folder)
+                print(f"Sweep forward match: Moving '{rrdf['filename']}' -> '{dest_foldername}'")
+                shutil.move(rrdf['path'], target_folder)
+                matched = True
+                break
+        
+        if not matched:
+            print(f"Warning: Could not find a matching DICOM folder for '{rrdf['filename']}'.")
 
 
 def find_local_dicom_sessions(base_export_path):
     """
-    Scans the local export directory and returns a dictionary of session paths
-    mapped to their expected RRDF folder name.
-    Looks for folders matching the pattern YYYY-MM-DD_HH_MM_SS
+    Finds all patient session folders in the export directory and figures out 
+    what the matching RRDF folder on the scanner should be named.
     """
     sessions = {}
     print(f"Scanning local directory '{base_export_path}' for DICOM sessions...")
     
-    # Regex to match the date format used in export.lua
+    # Looks for folders named like: YYYY-MM-DD_HH_MM_SS
     session_pattern = re.compile(r'(\d{4})-(\d{2})-(\d{2})_(\d{2})_(\d{2})_(\d{2})')
 
     for root, dirs, files in os.walk(base_export_path):
@@ -188,33 +224,31 @@ def find_local_dicom_sessions(base_export_path):
             match = session_pattern.match(d)
             if match:
                 year, month, day, hour, minute, second = match.groups()
-                # Construct the expected RRDF folder name format
                 expected_rrdf_name = f"rrdf_{year}{month}{day}_{hour}{minute}{second}"
                 full_path = os.path.join(root, d)
                 sessions[expected_rrdf_name] = full_path
-                print(f"  Found session: {d} (Expected RRDF: {expected_rrdf_name})")
+                print(f"  Found session: {d} (Looking for: {expected_rrdf_name})")
     
     return sessions
 
 def get_remote_rrdf_folders(ssh):
-    """Gets a list of all rrdf_ folders on the scanner."""
+    """Gets a list of all folders starting with 'rrdf_' from the scanner."""
     stdin, stdout, stderr = ssh.exec_command("ls -1 RRDF")
     output = stdout.read().decode('ascii').split('\n')
-    # Filter for folders starting with 'rrdf_'
     return [f.strip() for f in output if f.strip().startswith('rrdf_')]
 
 def main():
-    """Main function to orchestrate the entire process."""
+    """Main script execution."""
     
-    # --- 0. Find Local DICOM Sessions ---
+    # --- 1. Find local sessions ---
     local_sessions = find_local_dicom_sessions(DICOM_EXPORT_ROOT)
     
     if not local_sessions:
-        print("No local DICOM sessions found in the export directory. Exiting.")
+        print("No local DICOM sessions found. Exiting.")
         return
 
-    # --- 1. SSH Connection ---
-    SWOOP_IP = get_scanner_ip() # Get the IP dynamically
+    # --- 2. Connect to the scanner ---
+    SWOOP_IP = get_scanner_ip()
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -222,22 +256,22 @@ def main():
         ssh.connect(SWOOP_IP, username=SWOOP_USER, password=SWOOP_PASS, port=SWOOP_PORT)
         print("Connection successful.\n")
     except Exception as e:
-        print(f"Connection failed: {e}")
+        print(f"SSH connection failed: {e}")
         sys.exit(1)
 
     try:
-        # --- 2. Check Remote Folders ---
+        # --- 3. Get remote folders ---
         remote_folders = get_remote_rrdf_folders(ssh)
         print(f"Found {len(remote_folders)} RRDF folders on the scanner.")
 
-        # --- 3. Process Each Local Session ---
+        # --- 4. Process matches ---
         for expected_rrdf, local_session_path in local_sessions.items():
             if expected_rrdf in remote_folders:
                 print(f"\n--- Processing matching session: {expected_rrdf} ---")
                 remote_path = f'RRDF/{expected_rrdf}'
 
-                # --- 4. Download ---
-                print(f"Downloading remote folder '{remote_path}' to '{TEMP_DOWNLOAD_DIR}'...")
+                # Download the files to a temporary folder
+                print(f"Downloading '{remote_path}' to '{TEMP_DOWNLOAD_DIR}'...")
                 if os.path.exists(TEMP_DOWNLOAD_DIR): shutil.rmtree(TEMP_DOWNLOAD_DIR)
                 os.makedirs(TEMP_DOWNLOAD_DIR)
 
@@ -247,27 +281,27 @@ def main():
                 temp_local_rrdf_path = os.path.join(TEMP_DOWNLOAD_DIR, expected_rrdf)
                 print("Download complete.")
 
-                # --- 5. Relocate and Rename ---
-                relocate_rrdf_files_by_time(temp_local_rrdf_path, local_session_path)
+                # Match files to DICOM folders
+                relocate_rrdf_files_securely(temp_local_rrdf_path, local_session_path)
 
-                # Optional: Delete from Scanner (Uncomment if desired)
-                # print(f"Deleting '{expected_rrdf}' from the remote server...")
+                # Optional: Delete files from the scanner to free up space
+                # print(f"Deleting '{expected_rrdf}' from the scanner...")
                 # stdin, stdout, stderr = ssh.exec_command(f"rm -r {remote_path}")
                 # if stdout.channel.recv_exit_status() == 0:
-                #     print(f"'{expected_rrdf}' successfully deleted from scanner.")
+                #     print(f"Successfully deleted.")
                 # else:
-                #     print(f"Error deleting from scanner: {stderr.read().decode('ascii').strip()}")
+                #     print(f"Failed to delete: {stderr.read().decode('ascii').strip()}")
 
             else:
                 print(f"\nSkipping session: {os.path.basename(local_session_path)}")
-                print(f"  Reason: Expected RRDF folder '{expected_rrdf}' not found on the scanner.")
+                print(f"  Reason: Folder '{expected_rrdf}' not found on the scanner.")
 
     finally:
-        # --- 6. Clean Up ---
+        # --- 5. Clean up ---
         if os.path.exists(TEMP_DOWNLOAD_DIR):
             shutil.rmtree(TEMP_DOWNLOAD_DIR)
-            print(f"\nCleaned up temporary directory: {TEMP_DOWNLOAD_DIR}")
-        print("Closing SSH connection.")
+            print(f"\nCleaned up temp folder: {TEMP_DOWNLOAD_DIR}")
+        print("Closed SSH connection.")
         ssh.close()
 
 if __name__ == '__main__':
