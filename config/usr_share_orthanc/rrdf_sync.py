@@ -100,6 +100,8 @@ def relocate_rrdf_files_securely(temp_download_path, dicom_session_path):
     dicom_blocks = {} # Groups folders by their exact timestamp
     
     for folder_path in glob.glob(os.path.join(dicom_session_path, '*/')):
+        folder_path = os.path.normpath(folder_path)
+        
         dicom_files = glob.glob(os.path.join(folder_path, '*.dcm'))
         if not dicom_files:
             continue

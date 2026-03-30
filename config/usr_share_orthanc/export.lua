@@ -158,7 +158,7 @@ end
 
 -- Queries Flywheel to ensure files actually uploaded successfully. 
 -- Instantly deletes verified local files and uses .id sidecars to clear Orthanc's internal DB.
-function VerifyAndCleanupStudy(local_study_path, fw_project_uri, projectPath)
+function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
   print('--- Starting File Verification for ' .. local_study_path .. ' ---')
 
   local remoteDirCache = {}
@@ -186,8 +186,8 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, projectPath)
       print('[CACHE MISS] Fetching remote list for directory: ' .. local_dir)
 
       -- Construct the remote URI for the parent directory
-      -- 1. Extract the part of local_dir that comes after projPath
-      local sub_path = string.sub(local_dir, string.len(projPath) + 1)
+      -- 1. Extract the part of local_dir that comes after project_path
+      local sub_path = string.sub(local_dir, string.len(project_path) + 1)
 
       -- 2. Ensure the sub_path starts with a single slash if it doesn't already
       if string.sub(sub_path, 1, 1) ~= "/" then
@@ -387,14 +387,14 @@ function OnStableStudy(studyId, tags, metadata)
         local projNameLower = string.lower(projName)
         local fw_project_uri = routes[projNameLower]
         local fw_api_key = api_keys[projNameLower]
-        local projPath = data_directory .. '/' .. projName
+        local project_path = data_directory .. '/' .. projName
 
         -- 3a. Unroutable Project Handling: If a project folder isn't in routing.json, delete it.
         if not fw_project_uri or not fw_api_key then
           print('[CLEANUP] No routing rule or API key found for staged project: ' .. string.upper(projName))
           
           -- Read sidecar files to clear unroutable instances from Orthanc DB
-          local idsCmd = io.popen('find "' .. projPath .. '" -type f -name "*.id" 2>/dev/null')
+          local idsCmd = io.popen('find "' .. project_path .. '" -type f -name "*.id" 2>/dev/null')
           if idsCmd then
              for idFile in idsCmd:lines() do
                 local f = io.open(idFile, 'r')
@@ -406,8 +406,8 @@ function OnStableStudy(studyId, tags, metadata)
              end
              idsCmd:close()
           end
-          print('[CLEANUP] Deleting unroutable directory: ' .. projPath)
-          os.execute('rm -rf "' .. projPath .. '"')
+          print('[CLEANUP] Deleting unroutable directory: ' .. project_path)
+          os.execute('rm -rf "' .. project_path .. '"')
 
         -- 3b. Valid Project Handling: Upload to Flywheel
         else
@@ -429,18 +429,18 @@ function OnStableStudy(studyId, tags, metadata)
                 '%s import run --project "%s" --storage "%s" --exclude "path=~.*\\.DS_Store" --exclude "path=~.*\\.id$" --tree --wait',
                 fw_beta,
                 fw_project_uri,
-                projPath
+                project_path
             )
             print('Executing Flywheel Import: ' .. import_command)
             ExecuteAndLog(import_command)
             print('Import command finished.')
 
             -- Loop through every specific Session folder within the Project to verify its contents
-            local sessionsCmd = io.popen('find "' .. projPath .. '" -mindepth 2 -maxdepth 2 -type d 2>/dev/null')
+            local sessionsCmd = io.popen('find "' .. project_path .. '" -mindepth 2 -maxdepth 2 -type d 2>/dev/null')
             if sessionsCmd then
               for sessionPath in sessionsCmd:lines() do
                 -- Execute the cleanup validation
-                local cleanup_successful = VerifyAndCleanupStudy(sessionPath, fw_project_uri, projPath)
+                local cleanup_successful = VerifyAndCleanupStudy(sessionPath, fw_project_uri, project_path)
 
                 if cleanup_successful then
                   print('[SUCCESS] All local files verified and purged for: ' .. sessionPath)
