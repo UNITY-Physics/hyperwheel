@@ -169,6 +169,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
   local all_files_verified = true
 
   for local_filepath in find_handle:lines() do
+    -- 1. Extract the local directory and filename from the full path
     local filename = string.match(local_filepath, "([^/]+)$")
     local local_dir = string.match(local_filepath, "^(.*/)") 
 
@@ -184,12 +185,11 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri)
       print('--------------------------------------------------------')
       print('[CACHE MISS] Fetching remote list for directory: ' .. local_dir)
 
-      local base_path = local_study_path
-      if not base_path:find('/$') then base_path = base_path .. '/' end
-      local relative_dir = string.gsub(local_dir, base_path, '', 1) 
-      relative_dir = string.gsub(relative_dir, "/$", "") 
-      
+      -- Construct the remote URI for the parent directory
+      local relative_dir = string.gsub(local_dir, local_study_path .. '/', '')
+      relative_dir = string.gsub(relative_dir, "/$", "") -- Remove trailing slash
       local fw_uri_to_list = fw_project_uri .. '/' .. relative_dir
+
       print('[FETCH] Listing files from: ' .. fw_uri_to_list)
       local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
