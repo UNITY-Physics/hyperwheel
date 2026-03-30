@@ -193,13 +193,13 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
       if string.sub(sub_path, 1, 1) ~= "/" then
         sub_path = "/" .. sub_path
       end
-      
-      -- Combine the base URI with the subpath
-      local fw_uri_to_list = fw_project_uri .. sub_path
-      
+
       -- Strip the trailing slash
       sub_path = string.gsub(sub_path, "/$", "")
 
+      -- Combine the base URI with the subpath
+      local fw_uri_to_list = fw_project_uri .. sub_path
+      
       print('[FETCH] Listing files from: ' .. fw_uri_to_list)
       local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
