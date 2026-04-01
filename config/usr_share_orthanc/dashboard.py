@@ -1,3 +1,13 @@
+"""
+=====================================================================
+FILE: dashboard.py
+PROJECT: Hyperwheel
+DESCRIPTION: Flask-based web monitor for the Hyperwheel pipeline.
+             Parses Orthanc logs and the filesystem to provide
+             real-time status updates on an iPad or browser.
+=====================================================================
+"""
+
 from flask import Flask, jsonify, render_template_string
 import subprocess
 import os
@@ -293,7 +303,7 @@ def home():
 
 @app.route('/api/status')
 def get_status():
-    logs_raw = "Could not read logs."
+    logs_raw = "[DASHBOARD] [ERROR] Could not read logs."
     try:
         logs_raw = subprocess.check_output(['tail', '-n', '600', LOG_FILE]).decode('utf-8')
     except Exception:
@@ -346,16 +356,17 @@ def get_status():
     has_error = False
     error_msg = ""
 
+    # State Machine: Determines pipeline phase by searching logs for specific tags
     for i, line in enumerate(lines):
-        if "A study has become stable" in line:
+        if "[EXPORT] [INFO] A study has become stable" in line:
             export_state = "queued"
             has_error = False
             error_msg = ""
-        elif "Executing RRDF" in line or "Starting RRDF" in line or "RRDF sync finished" in line:
+        elif "[EXPORT] [INFO] Executing RRDF" in line or "[RRDF]" in line:
             if not has_error: export_state = "syncing"
-        elif "Processing Project:" in line or "Logging into Flywheel" in line or "Executing Flywheel Import" in line or "Import command finished" in line:
+        elif "[EXPORT] [INFO] Processing Project" in line or "Executing Flywheel Import" in line:
             if not has_error: export_state = "uploading"
-        elif "Starting File Verification" in line or "[CHECK] Local file" in line:
+        elif "[EXPORT] [INFO] Starting File Verification" in line:
             if not has_error: export_state = "verifying"
         elif "[SUCCESS] All local files verified" in line or "[CLEANUP] Deleting study" in line:
             export_state = "success"

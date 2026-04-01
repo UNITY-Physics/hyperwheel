@@ -1,8 +1,14 @@
 --[[
 =====================================================================
-  CONFIGURATION SETTINGS
+FILE: export.lua
+PROJECT: Hyperwheel
+DESCRIPTION: Main orchestration script for Orthanc. Handles DICOM 
+             routing, structured file export, RRDF synchronization 
+             triggers, and Flywheel uploads.
 =====================================================================
 --]]
+
+-- --- CONFIGURATION SETTINGS ---
 
 -- 1. Root directory for exported DICOM and RRDF files.
 local data_directory = '/var/lib/orthanc/export'
@@ -156,10 +162,12 @@ end
   end
 end
 
+-- --- CLEANUP AND VERIFICATION ---
+
 -- Queries Flywheel to ensure files actually uploaded successfully. 
 -- Instantly deletes verified local files and uses .id sidecars to clear Orthanc's internal DB.
 function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
-  print('--- Starting File Verification for ' .. local_study_path .. ' ---')
+  print('[EXPORT] [INFO] Starting File Verification for ' .. local_study_path)
 
   local remoteDirCache = {}
   local find_command = string.format("find %s -type f", local_study_path)
@@ -182,8 +190,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
 
     -- If we haven't fetched the Flywheel file list for this specific folder yet, do it now.
     if not remoteDirCache[local_dir] then
-      print('--------------------------------------------------------')
-      print('[CACHE MISS] Fetching remote list for directory: ' .. local_dir)
+      print('[EXPORT] [INFO] [CACHE MISS] Fetching remote list for directory: ' .. local_dir)
 
       -- Construct the remote URI for the parent directory
       -- Extract the part of local_dir that comes after project_path
@@ -200,7 +207,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
       -- Combine the base URI with the subpath
       local fw_uri_to_list = fw_project_uri .. sub_path
       
-      print('[FETCH] Listing files from: ' .. fw_uri_to_list)
+      print('[EXPORT] [INFO] [FETCH] Listing files from: ' .. fw_uri_to_list)
       local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
 
@@ -219,12 +226,12 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
       end
     end
 
-    print('[CHECK] Local file: ' .. filename)
+    print('[EXPORT] [INFO] [CHECK] Local file: ' .. filename)
     local remoteFileSet = remoteDirCache[local_dir]
 
     -- If the local file exists in the Flywheel remote directory, it is safe to delete.
     if remoteFileSet and remoteFileSet[filename] then
-      print('[SUCCESS] File confirmed. Deleting local payload: ' .. filename)
+      print('[EXPORT] [SUCCESS] File confirmed. Deleting local payload: ' .. filename)
       os.execute(string.format('rm "%s"', local_filepath))
 
       -- ATOMIC CLEANUP: Read the sidecar and delete the exact instance from Orthanc DB
@@ -234,7 +241,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
           local stored_instance_id = id_file:read('*a'):gsub('%s+', '')
           id_file:close()
           if stored_instance_id and stored_instance_id ~= "" then
-              print('          -> Deleting instance from Orthanc DB: ' .. stored_instance_id)
+              print('[EXPORT] [INFO]           -> Deleting instance from Orthanc DB: ' .. stored_instance_id)
               RestApiDelete('/instances/' .. stored_instance_id)
           end
           -- Clean up the sidecar file now that the instance is purged
@@ -242,7 +249,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
       end
     else
       -- File is missing from Flywheel. Do not delete local copies to prevent data loss.
-      print('[SKIP] File not found in remote directory. Local copy kept.')
+      print('[EXPORT] [WARN] [SKIP] File not found in remote directory. Local copy kept.')
       all_files_verified = false
     end
     
@@ -251,7 +258,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
   find_handle:close()
 
   -- Remove empty directories leftover from successful file deletions
-  print('--- Cleaning up empty directories... ---')
+  print('[EXPORT] [INFO] Cleaning up empty directories...')
   ExecuteAndLog(string.format("find %s -type d -empty -delete", local_study_path))
 
   return all_files_verified
@@ -269,7 +276,7 @@ function OnStoredInstance(instanceId, tags)
   -- 1. Determine destination routing based on OperatorsName (e.g. "PRISMA")
   StudyName = string.match(tags['OperatorsName'] or "", ".*/(.*)")
   if not StudyName then
-    print('Error: Cannot find valid OperatorsName (0008,1050) tag. Skipping export.')
+    print('[EXPORT] [ERROR] Cannot find valid OperatorsName (0008,1050) tag. Skipping export.')
     return
   end
 
@@ -325,20 +332,20 @@ function OnStoredInstance(instanceId, tags)
   local f = io.open(finalFilepath, 'rb')
   if f ~= nil then
     io.close(f)
-    print('File already exists, skipping: ' .. finalFilepath)
+    print('[EXPORT] [INFO] File already exists, skipping: ' .. finalFilepath)
     return
   end
 
   -- 7. Write the DICOM payload to the hard drive
   local dicomData = RestApiGet('/instances/' .. instanceId .. '/file')
   if dicomData == nil then
-    print('Error: Failed to fetch DICOM data for instance ' .. instanceId)
+    print('[EXPORT] [ERROR] Failed to fetch DICOM data for instance ' .. instanceId)
     return
   end
 
   local outFile, err_open = io.open(finalFilepath, 'wb')
   if not outFile then
-      print('Error: Failed to open file for writing: ' .. finalFilepath .. '. Error: ' .. tostring(err_open))
+      print('[EXPORT] [ERROR] Failed to open file for writing: ' .. finalFilepath)
       return
   end
   outFile:write(dicomData)
@@ -352,7 +359,7 @@ function OnStoredInstance(instanceId, tags)
     idFile:close()
   end
 
-  print('Exported instance ' .. instanceId .. ' to ' .. finalFilepath)
+  print('[EXPORT] [INFO] Exported instance ' .. instanceId .. ' to ' .. finalFilepath)
 end
 
 --[[
@@ -363,7 +370,7 @@ end
 
 -- Triggered automatically by Orthanc when a study receives no new DICOMs for a defined timeout (e.g., 60 seconds).
 function OnStableStudy(studyId, tags, metadata)
-  print('A study has become stable (ID: ' .. studyId .. '). Triggering export sweep...')
+  print('[EXPORT] [INFO] A study has become stable (ID: ' .. studyId .. '). Triggering export sweep...')
 
   local routes = ParseJsonFile(routing_path)
   local api_keys = ParseJsonFile(keychain_path)
@@ -374,10 +381,10 @@ function OnStableStudy(studyId, tags, metadata)
   end
 
   -- 1. Sync raw data (RRDF files) from the scanner over SSH
-  print('Executing RRDF synchronization script...')
+  print('[EXPORT] [INFO] Executing RRDF synchronization script...')
   local rrdf_command = python_executable .. ' ' .. rrdf_sync_script_path
   ExecuteAndLog(rrdf_command)
-  print('RRDF sync finished.')
+  print('[EXPORT] [INFO] RRDF sync finished.')
 
   -- 2. Iterate over every project folder waiting in the export directory.
   -- This ensures any backlog created by offline periods is systematically uploaded.
@@ -394,7 +401,7 @@ function OnStableStudy(studyId, tags, metadata)
 
         -- 3a. Unroutable Project Handling: If a project folder isn't in routing.json, delete it.
         if not fw_project_uri or not fw_api_key then
-          print('[CLEANUP] No routing rule or API key found for staged project: ' .. string.upper(projName))
+          print('[EXPORT] [CLEANUP] No routing rule or API key found for staged project: ' .. string.upper(projName))
           
           -- Read sidecar files to clear unroutable instances from Orthanc DB
           local idsCmd = io.popen('find "' .. project_path .. '" -type f -name "*.id" 2>/dev/null')
@@ -409,22 +416,22 @@ function OnStableStudy(studyId, tags, metadata)
              end
              idsCmd:close()
           end
-          print('[CLEANUP] Deleting unroutable directory: ' .. project_path)
+          print('[EXPORT] [CLEANUP] Deleting unroutable directory: ' .. project_path)
           os.execute('rm -rf "' .. project_path .. '"')
 
         -- 3b. Valid Project Handling: Upload to Flywheel
         else
-          print('--- Processing Project: ' .. string.upper(projName) .. ' ---')
-          print('Destination found: ' .. fw_project_uri)
+          print('[EXPORT] [INFO] Processing Project: ' .. string.upper(projName))
+          print('[EXPORT] [INFO] Destination found: ' .. fw_project_uri)
 
           -- Authenticate the CLI with this specific project's API Key
           local login_command = 'FW_CLI_API_KEY=' .. fw_api_key .. ' ' .. fw_beta .. ' login'
           local login_output = ExecuteAndLog(login_command)
 
           if not string.find(login_output, "Logged in to") then
-            print('[ERROR] Flywheel login FAILED for ' .. string.upper(projName) .. '. Please check API key and network connection. Aborting sync.')
+            print('[EXPORT] [ERROR] Flywheel login FAILED for ' .. string.upper(projName) .. '. Please check API key and network connection. Aborting sync.')
           else
-            print('Flywheel login successful.')
+            print('[EXPORT] [SUCCESS] Flywheel login successful.')
 
             -- Import the entire project folder in bulk. 
             -- We explicitly exclude the sidecar .id files and Mac .DS_Store files so they don't upload to Flywheel.
@@ -434,9 +441,9 @@ function OnStableStudy(studyId, tags, metadata)
                 fw_project_uri,
                 project_path
             )
-            print('Executing Flywheel Import: ' .. import_command)
+            print('[EXPORT] [INFO] Executing Flywheel Import: ' .. import_command)
             ExecuteAndLog(import_command)
-            print('Import command finished.')
+            print('[EXPORT] [INFO] Import command finished.')
 
             -- Loop through every specific Session folder within the Project to verify its contents
             local sessionsCmd = io.popen('find "' .. project_path .. '" -mindepth 2 -maxdepth 2 -type d 2>/dev/null')
@@ -446,11 +453,11 @@ function OnStableStudy(studyId, tags, metadata)
                 local cleanup_successful = VerifyAndCleanupStudy(sessionPath, fw_project_uri, project_path)
 
                 if cleanup_successful then
-                  print('[SUCCESS] All local files verified and purged for: ' .. sessionPath)
+                  print('[EXPORT] [SUCCESS] All local files verified and purged for: ' .. sessionPath)
                   -- Only delete the Session directory container if the contents were safely verified and emptied
                   os.execute('rm -rf "' .. sessionPath .. '"')
                 else
-                  print('[WARNING] Verification failed for ' .. sessionPath .. '. Keeping unverified files safe.')
+                  print('[EXPORT] [WARN] Verification failed for ' .. sessionPath .. '. Keeping unverified files safe.')
                 end
               end
               sessionsCmd:close()
@@ -458,11 +465,21 @@ function OnStableStudy(studyId, tags, metadata)
 
             -- Log out before moving to the next project
             ExecuteAndLog(fw_beta .. ' logout')
-            print('Flywheel sync process finished for: ' .. string.upper(projName))
+            print('[EXPORT] [INFO] Flywheel sync process finished for: ' .. string.upper(projName))
           end
         end
       end
     end
     p:close()
+
+    print('[EXPORT] [INFO] Executing Final Global Cleanup of Empty Export Folders')
+    -- Find all empty directories within the export root and delete them.
+    -- The '-delete' flag automatically processes bottom-up (depth-first),
+    -- meaning it safely clears empty Session -> Subject -> Project folders.
+    -- It will NEVER delete a folder that still contains unverified files.
+    local cleanup_cmd = string.format('find %s -type d -empty -delete', data_directory)
+    os.execute(cleanup_cmd)
+    print('[EXPORT] [INFO] Global Cleanup Finished')
+    
   end
 end
