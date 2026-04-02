@@ -242,7 +242,7 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
           local stored_instance_id = id_file:read('*a'):gsub('%s+', '')
           id_file:close()
           if stored_instance_id and stored_instance_id ~= "" then
-              print('[EXPORT] [INFO]           -> Deleting instance from Orthanc DB: ' .. stored_instance_id)
+              print('[EXPORT] [INFO] Deleting instance from Orthanc DB: ' .. stored_instance_id)
               RestApiDelete('/instances/' .. stored_instance_id)
           end
           -- Clean up the sidecar file now that the instance is purged
