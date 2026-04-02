@@ -208,7 +208,8 @@ function VerifyAndCleanupStudy(local_study_path, fw_project_uri, project_path)
       local fw_uri_to_list = fw_project_uri .. sub_path
       
       print('[EXPORT] [INFO] [FETCH] Listing files from: ' .. fw_uri_to_list)
-      local fw_ls_command = string.format('%s ls "%s"', fw_beta, fw_uri_to_list)
+      -- Force a wide terminal width so Flywheel never truncates filenames
+      local fw_ls_command = string.format('env COLUMNS=300 %s ls "%s"', fw_beta, fw_uri_to_list)
       local fw_output = ExecuteAndLog(fw_ls_command)
 
       remoteDirCache[local_dir] = {}
