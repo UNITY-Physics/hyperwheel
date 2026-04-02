@@ -185,12 +185,18 @@ def relocate_rrdf_files_securely(temp_download_path, dicom_session_path):
         if rrdf['time'] in dicom_blocks:
             target_folder = resolve_concurrent_acquisitions(dicom_blocks[rrdf['time']])
             dest_foldername = os.path.basename(target_folder)
-            print(f"[RRDF] [SUCCESS] Exact match: Moving '{rrdf['filename']}' -> '{dest_foldername}'")
-            shutil.move(rrdf['path'], target_folder)
             
-            # If we just moved files into a CALIPR folder, trigger the renamer
-            if 'calipr' in dest_foldername.lower():
-                rename_calipr_dicom_files(target_folder)
+            # Check if file already exists
+            dest_file_path = os.path.join(target_folder, rrdf['filename'])
+            if os.path.exists(dest_file_path):
+                print(f"[RRDF] [WARN] File already exists at destination, skipping move: '{rrdf['filename']}'")
+            else:
+                print(f"[RRDF] [SUCCESS] Exact match: Moving '{rrdf['filename']}' -> '{dest_foldername}'")
+                shutil.move(rrdf['path'], target_folder)
+                
+                # If we just moved files into a CALIPR folder, trigger the renamer
+                if 'calipr' in dest_foldername.lower():
+                    rename_calipr_dicom_files(target_folder)
         else:
             # Save files without an exact match for Phase 2
             unmatched_rrdfs.append(rrdf)
@@ -202,13 +208,20 @@ def relocate_rrdf_files_securely(temp_download_path, dicom_session_path):
     for rrdf in unmatched_rrdfs:
         matched = False
         # For leftover RRDF (like single planes of a DWI scan), look forward in time
-        # and assign them to the chronological next DICOM folder.
+        # and assign them to the chronological next DICOM folder
         for dcm_time in sorted_dicom_times:
             if dcm_time > rrdf['time']:
                 target_folder = resolve_concurrent_acquisitions(dicom_blocks[dcm_time])
                 dest_foldername = os.path.basename(target_folder)
-                print(f"[RRDF] [SUCCESS] Sweep forward match: Moving '{rrdf['filename']}' -> '{dest_foldername}'")
-                shutil.move(rrdf['path'], target_folder)
+                
+                # Check if file already exists
+                dest_file_path = os.path.join(target_folder, rrdf['filename'])
+                if os.path.exists(dest_file_path):
+                    print(f"[RRDF] [WARN] File already exists at destination, skipping move: '{rrdf['filename']}'")
+                else:
+                    print(f"[RRDF] [SUCCESS] Sweep forward match: Moving '{rrdf['filename']}' -> '{dest_foldername}'")
+                    shutil.move(rrdf['path'], target_folder)
+
                 matched = True
                 break
         
