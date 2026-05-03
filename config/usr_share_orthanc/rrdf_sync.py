@@ -136,23 +136,32 @@ def relocate_rrdf_files_securely(temp_download_path, dicom_session_path):
     # -------------------------------------------------------------------------
     def resolve_concurrent_acquisitions(folders):
         """
-        Tie-breaker: If multiple folders share a timestamp (e.g., DWI + ADC),
-        picks the primary raw data folder by prioritizing the folder with the lowest Series Number.
-        Example: Series 9 (Acquisition) is prioritized over Series 901 (Map).
+        Resolves ties by explicitly rejecting derived folders, 
+        then selecting the folder with the lowest Series Number.
         """
         if len(folders) == 1:
             return folders[0]['path']
             
-        # Sort folders numerically based on the leading digits in the folder name
-        try:
-            # Matches digits at the start of the string (e.g., '9' from '9_T2_Mapping')
-            folders.sort(key=lambda x: int(re.match(r'(\d+)', x['name']).group(1)))
-        except (AttributeError, ValueError, IndexError):
-            # Fallback to alphabetical sorting if folder names lack leading numbers
-            folders.sort(key=lambda x: x['name'])
+        # 1. Filter out known derived folders (ADC).
+        filtered_candidates = []
+        for f in folders:
+            name = f['name']
+            if 'adc' in name:
+                continue
+            filtered_candidates.append(f)
+        
+        # If the filter accidentally removed everything, fall back to the original list
+        candidates = filtered_candidates if filtered_candidates else folders
 
-        return folders[0]['path']
-    
+        # 2. Sort by Series Number (lowest wins)
+        try:
+            # Extract leading digits from the folder name (e.g., '306' from '306_DWI')
+            candidates.sort(key=lambda x: int(re.match(r'^(\d+)', x['name']).group(1)))
+        except (AttributeError, ValueError, IndexError):
+            candidates.sort(key=lambda x: x['name'])
+
+        return candidates[0]['path']
+
     # -------------------------------------------------------------------------
     # Step 3: Extract the exact creation time from the RRDF filenames
     # -------------------------------------------------------------------------
