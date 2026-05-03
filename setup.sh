@@ -120,6 +120,7 @@ install_flywheel_cli() {
   
   echo "Flywheel CLI installed and configured successfully."
 }
+
 setup_python_env() {
   print_step "Setting up Python Environment"
   if [ -d "$PYTHON_ENV_DIR" ]; then
@@ -193,31 +194,18 @@ enforce_sudo_password() {
 setup_ipad_dashboard() {
   print_step "Configuring iPad Dashboard & Hotspot"
 
-  # Prompt the user for their country code (Defaults to GB)
-  # echo "To comply with local Wi-Fi regulations, please enter your 2-letter country code (e.g., US, GB, SE, KE):"
-  # read -p "Country Code: " WIFI_COUNTRY
-  # WIFI_COUNTRY=${WIFI_COUNTRY:-GB}
-
-  # Ensure it is uppercase
-  # WIFI_COUNTRY=$(echo "$WIFI_COUNTRY" | tr '[:lower:]' '[:upper:]')
-
-  # echo "Setting up iPad Wi-Fi Hotspot on wlan0 (Region: $WIFI_COUNTRY)..."
-  
-  # 1. Set Wi-Fi Country to legally unlock the antenna
-  # raspi-config nonint do_wifi_country "GB" || true
-  
-  # 2. Force the radio unblocked at the hardware and NetworkManager level
+  # 1. Force the radio unblocked at the hardware and NetworkManager level
   rfkill unblock wifi || true
   nmcli radio wifi on || true
   
-  # 3. Give the hardware 3 seconds to physically initialize
+  # 2. Give the hardware 3 seconds to physically initialize
   sleep 3 
   ip link set wlan0 up || true
 
-  # 4. Create Hotspot (Hardcoded)
+  # 3. Create Hotspot (Hardcoded)
   nmcli device wifi hotspot ifname wlan0 ssid Hyperwheel password '#2020Imaging' || true
 
-  # 5. Ensure IP and Autoconnect are permanently set
+  # 4. Ensure IP and Autoconnect are permanently set
   nmcli connection modify Hotspot ipv4.addresses 192.168.99.1/24 || true
   nmcli connection modify Hotspot ipv4.method shared || true
   nmcli connection modify Hotspot connection.autoconnect yes || true
@@ -252,6 +240,50 @@ EOF
   echo "Dashboard setup complete. Accessible at http://192.168.99.1:5000"
 }
 
+setup_chromium_bookmarks() {
+  print_step "Configuring Chromium Bookmarks"
+
+  # Retrieve the user who invoked sudo (fallback to 'pi' if empty)
+  REAL_USER=${SUDO_USER:-pi}
+  echo "Setting bookmarks for desktop user: $REAL_USER"
+
+  echo "Closing Chromium safely..."
+  killall chromium-browser 2>/dev/null || true
+  sleep 2
+
+  echo "Injecting custom URLs into Bookmarks..."
+  
+  # Execute Python as the real user, NOT root, to preserve file permissions
+  sudo -u "$REAL_USER" python3 -c '
+import json
+import os
+
+bookmark_path = os.path.expanduser("~/.config/chromium/Default/Bookmarks")
+
+try:
+    with open(bookmark_path, "r") as f:
+        data = json.load(f)
+
+    # Wipe existing children and add the required lab bookmarks
+    data["roots"]["bookmark_bar"]["children"] = [
+        {"name": "Hyperfine Login", "type": "url", "url": "https://10.42.0.1:8080/"},
+        {"name": "Orthanc PACS", "type": "url", "url": "http://localhost:8042/"},
+        {"name": "Upload Monitor", "type": "url", "url": "http://192.168.99.1:5000/"}
+    ]
+
+    with open(bookmark_path, "w") as f:
+        json.dump(data, f, indent=4)
+        
+    print("Bookmarks wiped and updated successfully.")
+    
+except FileNotFoundError:
+    print(f"Warning: {bookmark_path} not found.")
+    print("Chromium must be launched at least once on this user account before bookmarks can be edited via script.")
+except Exception as e:
+    print(f"Error modifying bookmarks: {e}")
+'
+}
+
 finalize() {
   print_step "Finalizing Installation"
   echo "Enabling and restarting the Orthanc service..."
@@ -277,6 +309,7 @@ main() {
   deploy_and_secure_files
   enforce_sudo_password
   setup_ipad_dashboard
+  setup_chromium_bookmarks
   finalize
 }
 
